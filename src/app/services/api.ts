@@ -24,8 +24,7 @@ export interface AuditLog {
 export class ApiService {
   private http = inject(HttpClient);
 
-  // Update this to your live Koyeb backend URL tomorrow!
-  private baseUrl = 'http://localhost:3000';
+  private baseUrl = 'https://syst-core-api.vercel.app/';
 
   public token = signal<string | null>(null);
   public activeOperator = signal<string>('UNAUTHORIZED');
@@ -49,12 +48,10 @@ export class ApiService {
   public activeTab = this.currentTab.asReadonly();
 
   constructor() {
-    // Initial fetch from backend once service starts
     this.syncSystemState();
     setInterval(() => this.executeMetricsHeartbeat(), 3500);
   }
 
-  // Sync state cleanly with your NestJS Controllers
   public syncSystemState(): void {
     if (!this.token()) return;
 
@@ -72,7 +69,6 @@ export class ApiService {
   public executeHandshake(operatorId: string, passkey: string): boolean {
     if (!operatorId || !passkey) return false;
 
-    // Send payload to your NestJS AuthController endpoint
     this.http
       .post<{ token: string; role: string; operatorName: string }>(`${this.baseUrl}/auth/login`, {
         username: operatorId,
