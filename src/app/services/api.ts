@@ -24,7 +24,7 @@ export interface AuditLog {
 export class ApiService {
   private http = inject(HttpClient);
 
-  private baseUrl = 'https://syst-core-api.vercel.app/';
+  private baseUrl = 'https://syst-core-api.vercel.app';
 
   public token = signal<string | null>(null);
   public activeOperator = signal<string>('UNAUTHORIZED');
