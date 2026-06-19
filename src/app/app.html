@@ -1,0 +1,243 @@
+<div class="auth-gate-wrapper" *ngIf="!api.token()">
+  <div class="glass-crypto-card">
+    <div class="corner-accent top-left"></div>
+    <div class="corner-accent top-right"></div>
+    <div class="corner-accent bottom-left"></div>
+    <div class="corner-accent bottom-right"></div>
+
+    <div class="brand-badge">AEGIS SYSTEMS SECURE RUNTIME</div>
+    <h2 class="cyber-title">SECURE EDGE PORTAL</h2>
+    <p class="auth-caption">Establish authenticated runtime handshake signatures to route down into tenant telemetry
+      planes.</p>
+
+    <form (ngSubmit)="api.executeHandshake(usernameInput.value, passwordInput.value)" class="gate-form">
+      <div class="field-container">
+        <label class="field-label">OPERATOR CLEARANCE ID</label>
+        <div class="input-glow-wrapper">
+          <input #usernameInput type="text" placeholder="Operator Identifier... (shayan / user2)" required
+            autocomplete="off" class="cyber-input">
+          <div class="input-bottom-line"></div>
+        </div>
+      </div>
+
+      <div class="field-container" style="margin-top: 20px;">
+        <label class="field-label">CRITICAL ACCESS PASSKEY</label>
+        <div class="input-glow-wrapper">
+          <input #passwordInput type="password" placeholder="••••••••••••" required autocomplete="current-password"
+            class="cyber-input">
+          <div class="input-bottom-line"></div>
+        </div>
+      </div>
+
+      <button type="submit" class="handshake-submit-btn">
+        <span class="btn-shimmer"></span>
+        <span class="btn-text">EXECUTE NETWORK HANDSHAKE</span>
+      </button>
+    </form>
+  </div>
+</div>
+
+<div class="app-shell" *ngIf="api.token()">
+
+  <aside class="sidebar-tray">
+    <div class="sidebar-brand-block">
+      <div class="cyber-logo-text">AEGIS // CORE</div>
+      <span class="sub-brand">EDGE METER CONSOLE</span>
+    </div>
+
+    <nav class="nav-links-stack">
+      <button class="nav-item-btn" [class.active-tab]="api.activeTab() === 'matrix'" (click)="api.setTab('matrix')">
+        <span class="nav-icon"></span> SYSTEM MATRIX MAP
+      </button>
+
+      <button *ngIf="api.clearanceRole() === 'Admin'" class="nav-item-btn"
+        [class.active-tab]="api.activeTab() === 'provisioner'" (click)="api.setTab('provisioner')">
+        <span class="nav-icon"></span> CONTAINER PROVISIONER
+      </button>
+
+      <button class="nav-item-btn" [class.active-tab]="api.activeTab() === 'ledger'" (click)="api.setTab('ledger')">
+        <span class="nav-icon"></span> SYSTEM WIDE LEDGER
+      </button>
+    </nav>
+
+    <div class="sidebar-footer-profile">
+      <div class="profile-info">
+        <div class="operator-id">{{ api.activeOperator() }}</div>
+        <div class="operator-clearance">LVL // {{ api.clearanceRole() }}</div>
+      </div>
+      <button class="terminate-session-btn" (click)="api.terminateSession()">DISCONNECT</button>
+    </div>
+  </aside>
+
+  <div class="content-viewport-plane">
+
+    <header class="telemetry-top-strip">
+      <div class="telemetry-stat-tile">
+        <span class="stat-meta">GLOBAL CAPACITY EXHAUSTION</span>
+        <div class="stat-value-row">
+          <span class="stat-number" [class.text-alert]="api.globalBandwidthAverage() > 80">{{
+            api.globalBandwidthAverage() }}%</span>
+          <div class="mini-track-bg">
+            <div class="mini-fill-bar" [style.width.%]="api.globalBandwidthAverage()"
+              [class.bar-alert]="api.globalBandwidthAverage() > 80"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="telemetry-stat-tile">
+        <span class="stat-meta">TOTAL METRIC VOLUMES</span>
+        <span class="stat-number text-cyan">{{ api.totalNetworkTraffic() | number }} req/m</span>
+      </div>
+
+      <div class="telemetry-stat-tile">
+        <span class="stat-meta">SYSTEM DEFENSE MATRIX</span>
+        <span class="stat-number text-violet"
+          *ngIf="!api.isAttackActive() && !api.globalShieldEngaged()">CLEARANCE_NORMAL</span>
+        <span class="stat-number text-alert rapid-blink" *ngIf="api.isAttackActive()">BREACH_DETECTED</span>
+        <span class="stat-number text-success" *ngIf="api.globalShieldEngaged()">SHIELD_ACTIVE</span>
+      </div>
+    </header>
+
+    <main class="tab-content-wrapper" *ngIf="api.activeTab() === 'matrix'">
+
+      <section class="orchestration-action-bar card-glass">
+        <div class="panel-meta-title">
+          <h3>QUANTUM SANDBOX THREAT ISOLATION FIELD</h3>
+          <p>Enforcing complete node isolation sandboxes traps high-severity script execution loops safely away from
+            backend database structures instantly.</p>
+        </div>
+        <div class="action-btn-cluster-row">
+          <button class="action-btn trigger-shield-btn" [disabled]="api.clearanceRole() !== 'Admin'"
+            (click)="api.engageCounterMeasureShield()">
+            ENGAGE COUNTER-MEASURE ISOLATION SHIELD
+          </button>
+          <button class="action-btn trigger-breach-btn" [disabled]="api.clearanceRole() !== 'Admin'"
+            (click)="api.injectBreachSimulation()">
+            INJECT SIMULATED MALICIOUS BREACH DDOS VECTOR
+          </button>
+        </div>
+      </section>
+
+      <section class="nodes-grid-layout">
+        <div *ngFor="let node of api.nodes()" class="node-interactive-card card-glass" [attr.data-status]="node.status">
+          <div class="node-card-header">
+            <span class="node-type-pill">{{ node.type | uppercase }}</span>
+            <span class="node-status-flag" [attr.data-severity]="node.status">{{ node.status }}</span>
+          </div>
+          <h4 class="node-title-label">{{ node.name }}</h4>
+
+          <div class="node-metric-metric-stack">
+            <div class="metric-line">
+              <span class="lbl">Bandwidth Usage</span>
+              <span class="val">{{ node.bandwidthUsage }}%</span>
+            </div>
+            <div class="node-progress-track">
+              <div class="node-progress-fill" [style.width.%]="node.bandwidthUsage"></div>
+            </div>
+
+            <div class="metric-line inline-metrics">
+              <div><span class="lbl">SLA:</span> <span class="val text-cyan">{{ node.slaPerformance }}%</span></div>
+              <div><span class="lbl">Volume:</span> <span class="val text-violet">{{ node.monthlyCalls }}</span></div>
+            </div>
+          </div>
+
+          <div class="node-action-overlay-tray" *ngIf="api.clearanceRole() === 'Admin'">
+            <button class="ctrl-btn throttle" *ngIf="node.status === 'ONLINE'"
+              (click)="api.toggleNodeStatus(node.id, 'THROTTLE')">THROTTLE</button>
+            <button class="ctrl-btn isolate" *ngIf="node.status !== 'ISOLATED'"
+              (click)="api.toggleNodeStatus(node.id, 'ISOLATE')">ISOLATE</button>
+            <button class="ctrl-btn restore" *ngIf="node.status !== 'ONLINE'"
+              (click)="api.toggleNodeStatus(node.id, 'RESTORE')">RESTORE</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <main class="tab-content-wrapper max-width-form-plane"
+      *ngIf="api.activeTab() === 'provisioner' && api.clearanceRole() === 'Admin'">
+      <section class="card-glass workspace-form-block">
+        <div class="panel-meta-title border-bottom-violet">
+          <h3>B2B EDGE CONTAINER ROUTE PROVISIONER</h3>
+          <p>Deploy fully structured multi-tenant sandbox partitions directly into the active cluster routing matrix
+            pool.</p>
+        </div>
+
+        <form #provisionForm="ngForm"
+          (ngSubmit)="api.provisionNewNode(nodeName.value, $any(nodeType.value)); provisionForm.reset()"
+          class="provisioner-form-layout">
+          <div class="field-container">
+            <label class="field-label">CLIENT ROUTE NAME IDENTIFIER</label>
+            <div class="input-glow-wrapper">
+              <input #nodeName type="text" placeholder="e.g. logistics-delta-cluster" required class="cyber-input">
+              <div class="input-bottom-line"></div>
+            </div>
+          </div>
+
+          <div class="field-container">
+            <label class="field-label">TENANT ROUTING ARCHITECTURE MODE</label>
+            <div class="select-glow-wrapper">
+              <select #nodeType class="cyber-select">
+                <option value="consumer">Consumer Telemetry Core Tier (Standard)</option>
+                <option value="enterprise">Enterprise Alpha Cluster Line (High Capacity)</option>
+                <option value="secure">Isolated Secure Ledger Sector (Hardened Shielding)</option>
+              </select>
+              <div class="custom-select-arrow">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </div>
+          </div>
+
+          <button type="submit" class="execute-provision-action-btn">
+            <span class="btn-shimmer"></span>
+            <span class="btn-text">INITIALIZE CORE CONTAINER DEPLOYMENT</span>
+          </button>
+        </form>
+      </section>
+    </main>
+
+    <main class="tab-content-wrapper" *ngIf="api.activeTab() === 'ledger'">
+      <section class="card-glass full-scale-table-block">
+        <div class="panel-meta-title">
+          <h3>SYSTEM WIDE STRUCTURAL AUDIT LEDGER</h3>
+          <p>Chronological trace of core network deviation indexes, cryptographic payload sequences, and administrative
+            operational logs.</p>
+        </div>
+
+        <div class="table-scrolling-viewport">
+          <table class="enterprise-audit-table">
+            <thead>
+              <tr>
+                <th>TIMESTAMP</th>
+                <th>OPERATIONAL SCOPE</th>
+                <th>DEVIATION FEED EVENT PAYLOAD DESCRIPTION</th>
+                <th>SEVERITY</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr *ngFor="let log of api.auditLogs()">
+                <td class="log-time-cell">{{ log.timestamp }}</td>
+                <td class="log-scope-cell"><span class="scope-text">>> [{{ log.scope }}]</span></td>
+                <td class="log-event-cell">{{ log.event }}</td>
+                <td><span class="severity-badge-pill" [attr.data-severity]="log.severity">{{ log.severity }}</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer class="app-terminal-footer">
+      <div class="terminal-bar-header">ACTIVE INDEPENDENT INTRUSION DETECTION SYSTEM AUDIT LOG LEDGER FEED</div>
+      <div class="terminal-scroller-window">
+        <div *ngFor="let log of api.auditLogs().slice(0, 4)" class="terminal-line">
+          <span class="term-time">[{{ log.timestamp }}]</span>
+          <span class="term-scope" [attr.data-severity]="log.severity">[{{ log.scope }}]</span>
+          <span class="term-text">{{ log.event }}</span>
+        </div>
+      </div>
+    </footer>
+
+  </div>
+</div>
