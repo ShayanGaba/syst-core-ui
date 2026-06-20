@@ -25,11 +25,15 @@ export class ApiService {
   private http = inject(HttpClient);
   private baseUrl = 'https://syst-core-api.vercel.app';
 
-  // State Management Signals
+  // Core Identity State Signals
   public token = signal<string | null>(localStorage.getItem('token'));
   public activeOperator = signal<string>(localStorage.getItem('operator') || 'UNAUTHORIZED');
   public clearanceRole = signal<string>(localStorage.getItem('role') || 'GUEST');
 
+  // Interface Navigation Tab State
+  public activeTab = signal<string>('matrix');
+
+  // Network Telemetry Channels
   public totalNetworkTraffic = signal<number>(142850);
   public isAttackActive = signal<boolean>(false);
   public globalShieldEngaged = signal<boolean>(false);
@@ -47,7 +51,6 @@ export class ApiService {
   });
 
   constructor() {
-    // If a session already exists on boot, fire up the telemetry sync engines immediately
     if (this.token()) {
       this.startLiveTelemetrySync();
     }
@@ -61,14 +64,35 @@ export class ApiService {
     };
   }
 
-  // Starts real-time automated background polling for terminal logs and infrastructure health
+  // Layout Tab Interface Engine Controls
+  public setTab(tabName: string) {
+    this.activeTab.set(tabName);
+  }
+
+  // Authentication Handshake Channel Router
+  public executeHandshake(usernameInput: string, passwordInput: string) {
+    this.http
+      .post<any>(`${this.baseUrl}/auth/login`, { username: usernameInput, password: passwordInput })
+      .subscribe({
+        next: (res) => {
+          const token = res.token || res.accessToken;
+          const operator = res.operator || res.username || usernameInput;
+          const role = res.role || res.clearance || 'USER';
+
+          if (token) {
+            this.handleLoginSuccess(token, operator, role);
+          }
+        },
+        error: (err) => console.error('System authentication breach failed:', err),
+      });
+  }
+
+  // Continuous Telemetry Stream Synchronization
   public startLiveTelemetrySync() {
     if (this.syncInterval) clearInterval(this.syncInterval);
 
-    // Fetch immediately on activation
     this.syncTelemetryData();
 
-    // Continuously pull updates every 2000ms (2 seconds) to keep the terminal updating live
     this.syncInterval = setInterval(() => {
       this.syncTelemetryData();
     }, 2000);
@@ -84,28 +108,26 @@ export class ApiService {
   private syncTelemetryData() {
     if (!this.token()) return;
 
-    // Direct background stream for infrastructure nodes
     this.http.get<SystemNode[]>(`${this.baseUrl}/metrics/nodes`, this.getHeaders()).subscribe({
       next: (data) => this.nodes.set(data),
-      error: (err) => console.error('Telemetry node sync drop:', err),
+      error: (err) => console.error('Node telemetry pipeline broken:', err),
     });
 
-    // Direct background stream for the live command line terminal feed
     this.http.get<any[]>(`${this.baseUrl}/metrics/logs`, this.getHeaders()).subscribe({
       next: (data) => {
         const parsedLogs: AuditLog[] = data.map((log) => ({
-          timestamp: log.timestamp,
-          scope: log.scope,
-          event: log.event,
-          severity: log.severity === 'WARN' ? 'WARN' : log.severity,
+          timestamp: log.timestamp || log.createdAt || new Date().toISOString(),
+          scope: log.scope || log.tenantId || 'GLOBAL_SYSTEM',
+          event: log.event || log.action,
+          severity: log.severity === 'WARN' ? 'WARN' : log.severity || 'INFO',
         }));
         this.auditLogs.set(parsedLogs);
       },
-      error: (err) => console.error('Terminal feed log sync drop:', err),
+      error: (err) => console.error('Ledger terminal logging stream disconnected:', err),
     });
   }
 
-  // Mutation commands - automatically triggers an immediate sync refresh upon completion
+  // Mutation and Control Methods
   public toggleNodeStatus(nodeId: string, instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE') {
     return this.http
       .post<
@@ -116,6 +138,20 @@ export class ApiService {
           this.nodes.set(updatedNodes);
           this.syncTelemetryData();
         },
+      });
+  }
+
+  public provisionNewNode(name: string, type: 'consumer' | 'enterprise' | 'secure') {
+    return this.http
+      .post<
+        SystemNode[]
+      >(`${this.baseUrl}/metrics/nodes/provision`, { name, type }, this.getHeaders())
+      .subscribe({
+        next: (updatedNodes) => {
+          this.nodes.set(updatedNodes);
+          this.syncTelemetryData();
+        },
+        error: (err) => console.error('Cloud deployment generation drop:', err),
       });
   }
 
@@ -145,7 +181,6 @@ export class ApiService {
       });
   }
 
-  // Authentication interface controllers
   public handleLoginSuccess(token: string, operator: string, role: string) {
     localStorage.setItem('token', token);
     localStorage.setItem('operator', operator);
@@ -158,7 +193,7 @@ export class ApiService {
     this.startLiveTelemetrySync();
   }
 
-  public disconnectSession() {
+  public terminateSession() {
     localStorage.clear();
     this.token.set(null);
     this.activeOperator.set('UNAUTHORIZED');
