@@ -1,7 +1,6 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
-import { Observable } from 'rxjs';
-import { tap } from 'rxjs/operators';
+import { Router } from '@angular/router';
 
 export interface SystemNode {
   id: string;
@@ -25,6 +24,7 @@ export interface AuditLog {
 })
 export class ApiService {
   private http = inject(HttpClient);
+  private router = inject(Router);
   private baseUrl = 'https://syst-core-api.vercel.app';
 
   // Core Identity State Signals
@@ -68,13 +68,13 @@ export class ApiService {
     this.activeTab.set(tabName);
   }
 
-  // Heavy-duty login handler that checks all possible token properties
-  public executeHandshake(usernameInput: string, passwordInput: string): Observable<any> {
-    return this.http
+  // Self-subscribing execution loop that fires absolutely unconditionally
+  public executeHandshake(usernameInput: string, passwordInput: string): void {
+    this.http
       .post<any>(`${this.baseUrl}/auth/login`, { username: usernameInput, password: passwordInput })
-      .pipe(
-        tap((res) => {
-          // Checks every single common variant (including standard NestJS access_token)
+      .subscribe({
+        next: (res) => {
+          // Deep scan response object variants for authentication payloads
           const token =
             res?.token ||
             res?.accessToken ||
@@ -92,16 +92,27 @@ export class ApiService {
             this.token.set(token);
             this.activeOperator.set(operator);
             this.clearanceRole.set(role);
+            this.activeTab.set('matrix'); // Switch view state signal immediately
 
             this.fetchDashboardData();
+
+            // If your application uses Angular router pathways, kick it out to dashboard link
+            this.router.navigate(['/dashboard']).catch(() => {
+              console.log('App is utilizing state-swapping instead of deep router links.');
+            });
           } else {
-            console.error(
-              'Authentication responded successfully, but no valid token key was detected in payload:',
-              res,
+            alert(
+              'Server accepted credentials but did not send a token key in its response object.',
             );
           }
-        }),
-      );
+        },
+        error: (err) => {
+          console.error('System Identity Validation Breach Failed:', err);
+          alert(
+            `Server Login Rejected!\nStatus Code: ${err.status}\nMessage: ${err.error?.message || err.message}`,
+          );
+        },
+      });
   }
 
   public fetchDashboardData() {
@@ -126,60 +137,54 @@ export class ApiService {
     });
   }
 
-  public toggleNodeStatus(
-    nodeId: string,
-    instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE',
-  ): Observable<SystemNode[]> {
-    return this.http
+  public toggleNodeStatus(nodeId: string, instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE') {
+    this.http
       .post<
         SystemNode[]
       >(`${this.baseUrl}/metrics/nodes/${nodeId}/status`, { instruction }, this.getHeaders())
-      .pipe(
-        tap((updatedNodes) => {
+      .subscribe({
+        next: (updatedNodes) => {
           this.nodes.set(updatedNodes);
           this.fetchDashboardData();
-        }),
-      );
+        },
+      });
   }
 
-  public provisionNewNode(
-    name: string,
-    type: 'consumer' | 'enterprise' | 'secure',
-  ): Observable<SystemNode[]> {
-    return this.http
+  public provisionNewNode(name: string, type: 'consumer' | 'enterprise' | 'secure') {
+    this.http
       .post<
         SystemNode[]
       >(`${this.baseUrl}/metrics/nodes/provision`, { name, type }, this.getHeaders())
-      .pipe(
-        tap((updatedNodes) => {
+      .subscribe({
+        next: (updatedNodes) => {
           this.nodes.set(updatedNodes);
           this.fetchDashboardData();
-        }),
-      );
+        },
+      });
   }
 
-  public engageCounterMeasureShield(): Observable<any> {
-    return this.http.post<any>(`${this.baseUrl}/metrics/system/shield`, {}, this.getHeaders()).pipe(
-      tap((res) => {
+  public engageCounterMeasureShield() {
+    this.http.post<any>(`${this.baseUrl}/metrics/system/shield`, {}, this.getHeaders()).subscribe({
+      next: (res) => {
         this.nodes.set(res.nodes);
         this.globalShieldEngaged.set(true);
         this.isAttackActive.set(false);
         this.fetchDashboardData();
-      }),
-    );
+      },
+    });
   }
 
-  public injectBreachSimulation(): Observable<any> {
-    return this.http
+  public injectBreachSimulation() {
+    this.http
       .post<any>(`${this.baseUrl}/metrics/system/breach-test`, {}, this.getHeaders())
-      .pipe(
-        tap((res) => {
+      .subscribe({
+        next: (res) => {
           this.nodes.set(res.nodes);
           this.isAttackActive.set(true);
           this.globalShieldEngaged.set(false);
           this.fetchDashboardData();
-        }),
-      );
+        },
+      });
   }
 
   public terminateSession() {
