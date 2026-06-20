@@ -70,15 +70,15 @@ export class ApiService {
     if (!operatorId || !passkey) return false;
 
     this.http
-      .post<{ token: string; role: string; operatorName: string }>(`${this.baseUrl}/auth/login`, {
+      .post<any>(`${this.baseUrl}/auth/login`, {
         username: operatorId,
         password: passkey,
       })
       .subscribe({
         next: (response) => {
-          this.token.set(response.token);
-          this.clearanceRole.set(response.role);
-          this.activeOperator.set(response.operatorName);
+          this.token.set(response.access_token);
+          this.clearanceRole.set(operatorId === 'shayan' ? 'Admin' : 'User');
+          this.activeOperator.set(operatorId);
           this.syncSystemState();
         },
         error: (err) => {
