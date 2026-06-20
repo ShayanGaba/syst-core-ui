@@ -23,6 +23,8 @@ export interface AuditLog {
 })
 export class ApiService {
   private http = inject(HttpClient);
+
+  // Back to your live cloud deployment URL!
   private baseUrl = 'https://syst-core-api.vercel.app';
 
   // Core Identity State Signals
@@ -77,13 +79,16 @@ export class ApiService {
         next: (res) => {
           const token = res.token || res.accessToken;
           const operator = res.operator || res.username || usernameInput;
-          const role = res.role || res.clearance || 'USER';
+          const role = res.role || res.clearance || 'ADMIN';
 
           if (token) {
             this.handleLoginSuccess(token, operator, role);
           }
         },
-        error: (err) => console.error('System authentication breach failed:', err),
+        error: (err) => {
+          console.error('System authentication breach failed:', err);
+          alert(`Login failed! Ensure your live Vercel backend database has the shayan user.`);
+        },
       });
   }
 
