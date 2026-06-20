@@ -1,5 +1,5 @@
 import { Injectable, signal, computed, inject } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpHeaders } from '@angular/common/http';
 
 export interface SystemNode {
   id: string;
@@ -23,7 +23,6 @@ export interface AuditLog {
 })
 export class ApiService {
   private http = inject(HttpClient);
-
   private baseUrl = 'https://syst-core-api.vercel.app';
 
   public token = signal<string | null>(null);
@@ -52,19 +51,26 @@ export class ApiService {
     setInterval(() => this.executeMetricsHeartbeat(), 3500);
   }
 
-  // src/app/services/api.ts
+  /**
+   Helper method to append the JWT access token to request headers safely
+   */
+  private getAuthOptions() {
+    return {
+      headers: new HttpHeaders({
+        Authorization: `Bearer ${this.token()}`,
+      }),
+    };
+  }
 
   public syncSystemState(): void {
     if (!this.token()) return;
 
-    // Change '/nodes' to '/metrics/nodes'
-    this.http.get<SystemNode[]>(`${this.baseUrl}/metrics/nodes`).subscribe({
+    this.http.get<SystemNode[]>(`${this.baseUrl}/metrics/nodes`, this.getAuthOptions()).subscribe({
       next: (data) => this.nodes.set(data),
       error: (err) => console.error('Failed to sync system cluster infrastructure:', err),
     });
 
-    // Change '/logs' to '/metrics/logs'
-    this.http.get<AuditLog[]>(`${this.baseUrl}/metrics/logs`).subscribe({
+    this.http.get<AuditLog[]>(`${this.baseUrl}/metrics/logs`, this.getAuthOptions()).subscribe({
       next: (data) => this.auditLogs.set(data),
       error: (err) => console.error('Failed to retrieve active log cache:', err),
     });
@@ -111,7 +117,9 @@ export class ApiService {
     if (this.clearanceRole() !== 'Admin') return;
 
     this.http
-      .post<SystemNode[]>(`${this.baseUrl}/nodes/${nodeId}/status`, { instruction })
+      .post<
+        SystemNode[]
+      >(`${this.baseUrl}/metrics/nodes/${nodeId}/status`, { instruction }, this.getAuthOptions())
       .subscribe({
         next: (updatedNodes) => this.nodes.set(updatedNodes),
         error: (err) => console.error('Core routing instruction rejected by backend node:', err),
@@ -125,10 +133,14 @@ export class ApiService {
     if (this.clearanceRole() !== 'Admin' || !nodeName || !nodeName.trim()) return;
 
     this.http
-      .post<SystemNode[]>(`${this.baseUrl}/nodes/provision`, {
-        name: nodeName,
-        type: architectureType,
-      })
+      .post<SystemNode[]>(
+        `${this.baseUrl}/metrics/nodes/provision`,
+        {
+          name: nodeName,
+          type: architectureType,
+        },
+        this.getAuthOptions(),
+      )
       .subscribe({
         next: (updatedNodes) => {
           this.nodes.set(updatedNodes);
@@ -142,7 +154,10 @@ export class ApiService {
     if (this.clearanceRole() !== 'Admin') return;
 
     this.http
-      .post<{ nodes: SystemNode[]; shieldActive: boolean }>(`${this.baseUrl}/system/shield`, {})
+      .post<{
+        nodes: SystemNode[];
+        shieldActive: boolean;
+      }>(`${this.baseUrl}/metrics/system/shield`, {}, this.getAuthOptions())
       .subscribe({
         next: (response) => {
           this.globalShieldEngaged.set(response.shieldActive);
@@ -160,7 +175,7 @@ export class ApiService {
       .post<{
         nodes: SystemNode[];
         attackActive: boolean;
-      }>(`${this.baseUrl}/system/breach-test`, {})
+      }>(`${this.baseUrl}/metrics/system/breach-test`, {}, this.getAuthOptions())
       .subscribe({
         next: (response) => {
           this.globalShieldEngaged.set(false);
