@@ -1,5 +1,7 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
+import { tap } from 'rxjs/operators';
+import { Observable } from 'rxjs';
 
 export interface SystemNode {
   id: string;
@@ -24,7 +26,7 @@ export interface AuditLog {
 export class ApiService {
   private http = inject(HttpClient);
 
-  // Back to your live cloud deployment URL!
+  // Direct live production Vercel backend pipeline
   private baseUrl = 'https://syst-core-api.vercel.app';
 
   // Core Identity State Signals
@@ -71,25 +73,26 @@ export class ApiService {
     this.activeTab.set(tabName);
   }
 
-  // Authentication Handshake Channel Router
-  public executeHandshake(usernameInput: string, passwordInput: string) {
-    this.http
+  // Fixed: Returns a true Observable with pipelined side effects so your UI won't crash
+  public executeHandshake(usernameInput: string, passwordInput: string): Observable<any> {
+    return this.http
       .post<any>(`${this.baseUrl}/auth/login`, { username: usernameInput, password: passwordInput })
-      .subscribe({
-        next: (res) => {
-          const token = res.token || res.accessToken;
-          const operator = res.operator || res.username || usernameInput;
-          const role = res.role || res.clearance || 'ADMIN';
+      .pipe(
+        tap({
+          next: (res) => {
+            const token = res.token || res.accessToken;
+            const operator = res.operator || res.username || usernameInput;
+            const role = res.role || res.clearance || 'ADMIN';
 
-          if (token) {
-            this.handleLoginSuccess(token, operator, role);
-          }
-        },
-        error: (err) => {
-          console.error('System authentication breach failed:', err);
-          alert(`Login failed! Ensure your live Vercel backend database has the shayan user.`);
-        },
-      });
+            if (token) {
+              this.handleLoginSuccess(token, operator, role);
+            }
+          },
+          error: (err) => {
+            console.error('System authentication breach failed:', err);
+          },
+        }),
+      );
   }
 
   // Continuous Telemetry Stream Synchronization
@@ -132,58 +135,61 @@ export class ApiService {
     });
   }
 
-  // Mutation and Control Methods
-  public toggleNodeStatus(nodeId: string, instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE') {
+  // Fixed Mutation Operators to return proper Observables
+  public toggleNodeStatus(
+    nodeId: string,
+    instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE',
+  ): Observable<SystemNode[]> {
     return this.http
       .post<
         SystemNode[]
       >(`${this.baseUrl}/metrics/nodes/${nodeId}/status`, { instruction }, this.getHeaders())
-      .subscribe({
-        next: (updatedNodes) => {
+      .pipe(
+        tap((updatedNodes) => {
           this.nodes.set(updatedNodes);
           this.syncTelemetryData();
-        },
-      });
+        }),
+      );
   }
 
-  public provisionNewNode(name: string, type: 'consumer' | 'enterprise' | 'secure') {
+  public provisionNewNode(
+    name: string,
+    type: 'consumer' | 'enterprise' | 'secure',
+  ): Observable<SystemNode[]> {
     return this.http
       .post<
         SystemNode[]
       >(`${this.baseUrl}/metrics/nodes/provision`, { name, type }, this.getHeaders())
-      .subscribe({
-        next: (updatedNodes) => {
+      .pipe(
+        tap((updatedNodes) => {
           this.nodes.set(updatedNodes);
           this.syncTelemetryData();
-        },
-        error: (err) => console.error('Cloud deployment generation drop:', err),
-      });
+        }),
+      );
   }
 
-  public engageCounterMeasureShield() {
-    return this.http
-      .post<any>(`${this.baseUrl}/metrics/system/shield`, {}, this.getHeaders())
-      .subscribe({
-        next: (res) => {
-          this.nodes.set(res.nodes);
-          this.globalShieldEngaged.set(true);
-          this.isAttackActive.set(false);
-          this.syncTelemetryData();
-        },
-      });
+  public engageCounterMeasureShield(): Observable<any> {
+    return this.http.post<any>(`${this.baseUrl}/metrics/system/shield`, {}, this.getHeaders()).pipe(
+      tap((res) => {
+        this.nodes.set(res.nodes);
+        this.globalShieldEngaged.set(true);
+        this.isAttackActive.set(false);
+        this.syncTelemetryData();
+      }),
+    );
   }
 
-  public injectBreachSimulation() {
+  public injectBreachSimulation(): Observable<any> {
     return this.http
       .post<any>(`${this.baseUrl}/metrics/system/breach-test`, {}, this.getHeaders())
-      .subscribe({
-        next: (res) => {
+      .pipe(
+        tap((res) => {
           this.nodes.set(res.nodes);
           this.isAttackActive.set(true);
           this.globalShieldEngaged.set(false);
           this.syncTelemetryData();
-        },
-      });
+        }),
+      );
   }
 
   public handleLoginSuccess(token: string, operator: string, role: string) {
