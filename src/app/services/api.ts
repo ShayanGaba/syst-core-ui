@@ -52,15 +52,19 @@ export class ApiService {
     setInterval(() => this.executeMetricsHeartbeat(), 3500);
   }
 
+  // src/app/services/api.ts
+
   public syncSystemState(): void {
     if (!this.token()) return;
 
-    this.http.get<SystemNode[]>(`${this.baseUrl}/nodes`).subscribe({
+    // Change '/nodes' to '/metrics/nodes'
+    this.http.get<SystemNode[]>(`${this.baseUrl}/metrics/nodes`).subscribe({
       next: (data) => this.nodes.set(data),
       error: (err) => console.error('Failed to sync system cluster infrastructure:', err),
     });
 
-    this.http.get<AuditLog[]>(`${this.baseUrl}/logs`).subscribe({
+    // Change '/logs' to '/metrics/logs'
+    this.http.get<AuditLog[]>(`${this.baseUrl}/metrics/logs`).subscribe({
       next: (data) => this.auditLogs.set(data),
       error: (err) => console.error('Failed to retrieve active log cache:', err),
     });
