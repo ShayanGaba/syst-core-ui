@@ -1,7 +1,7 @@
 import { Injectable, inject, signal, computed } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
-import { tap } from 'rxjs/operators';
 import { Observable } from 'rxjs';
+import { tap } from 'rxjs/operators';
 
 export interface SystemNode {
   id: string;
@@ -25,8 +25,6 @@ export interface AuditLog {
 })
 export class ApiService {
   private http = inject(HttpClient);
-
-  // Direct live production Vercel backend pipeline
   private baseUrl = 'https://syst-core-api.vercel.app';
 
   // Core Identity State Signals
@@ -34,18 +32,16 @@ export class ApiService {
   public activeOperator = signal<string>(localStorage.getItem('operator') || 'UNAUTHORIZED');
   public clearanceRole = signal<string>(localStorage.getItem('role') || 'GUEST');
 
-  // Interface Navigation Tab State
+  // Navigation Tab State
   public activeTab = signal<string>('matrix');
 
-  // Network Telemetry Channels
+  // Telemetry Data Stores
   public totalNetworkTraffic = signal<number>(142850);
   public isAttackActive = signal<boolean>(false);
   public globalShieldEngaged = signal<boolean>(false);
 
   public nodes = signal<SystemNode[]>([]);
   public auditLogs = signal<AuditLog[]>([]);
-
-  private syncInterval: any = null;
 
   globalBandwidthAverage = computed(() => {
     const activeNodes = this.nodes().filter((n) => n.status !== 'ISOLATED');
@@ -56,7 +52,7 @@ export class ApiService {
 
   constructor() {
     if (this.token()) {
-      this.startLiveTelemetrySync();
+      this.fetchDashboardData();
     }
   }
 
@@ -68,57 +64,42 @@ export class ApiService {
     };
   }
 
-  // Layout Tab Interface Engine Controls
   public setTab(tabName: string) {
     this.activeTab.set(tabName);
   }
 
-  // Fixed: Returns a true Observable with pipelined side effects so your UI won't crash
+  // Pure, solid login connection with zero background loop clutter
   public executeHandshake(usernameInput: string, passwordInput: string): Observable<any> {
     return this.http
       .post<any>(`${this.baseUrl}/auth/login`, { username: usernameInput, password: passwordInput })
       .pipe(
-        tap({
-          next: (res) => {
-            const token = res.token || res.accessToken;
-            const operator = res.operator || res.username || usernameInput;
-            const role = res.role || res.clearance || 'ADMIN';
+        tap((res) => {
+          const token = res.token || res.accessToken;
+          const operator = res.operator || res.username || usernameInput;
+          const role = res.role || res.clearance || 'ADMIN';
 
-            if (token) {
-              this.handleLoginSuccess(token, operator, role);
-            }
-          },
-          error: (err) => {
-            console.error('System authentication breach failed:', err);
-          },
+          if (token) {
+            localStorage.setItem('token', token);
+            localStorage.setItem('operator', operator);
+            localStorage.setItem('role', role);
+
+            this.token.set(token);
+            this.activeOperator.set(operator);
+            this.clearanceRole.set(role);
+
+            this.fetchDashboardData();
+          }
         }),
       );
   }
 
-  // Continuous Telemetry Stream Synchronization
-  public startLiveTelemetrySync() {
-    if (this.syncInterval) clearInterval(this.syncInterval);
-
-    this.syncTelemetryData();
-
-    this.syncInterval = setInterval(() => {
-      this.syncTelemetryData();
-    }, 2000);
-  }
-
-  public stopLiveTelemetrySync() {
-    if (this.syncInterval) {
-      clearInterval(this.syncInterval);
-      this.syncInterval = null;
-    }
-  }
-
-  private syncTelemetryData() {
+  // Standard one-time fetch on load or action completions
+  public fetchDashboardData() {
     if (!this.token()) return;
 
     this.http.get<SystemNode[]>(`${this.baseUrl}/metrics/nodes`, this.getHeaders()).subscribe({
       next: (data) => this.nodes.set(data),
-      error: (err) => console.error('Node telemetry pipeline broken:', err),
+      error: (err) => console.error('Failed to load infrastructure data:', err),
     });
 
     this.http.get<any[]>(`${this.baseUrl}/metrics/logs`, this.getHeaders()).subscribe({
@@ -131,11 +112,11 @@ export class ApiService {
         }));
         this.auditLogs.set(parsedLogs);
       },
-      error: (err) => console.error('Ledger terminal logging stream disconnected:', err),
+      error: (err) => console.error('Failed to load audit logs:', err),
     });
   }
 
-  // Fixed Mutation Operators to return proper Observables
+  // Infrastructure Controllers
   public toggleNodeStatus(
     nodeId: string,
     instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE',
@@ -147,7 +128,7 @@ export class ApiService {
       .pipe(
         tap((updatedNodes) => {
           this.nodes.set(updatedNodes);
-          this.syncTelemetryData();
+          this.fetchDashboardData();
         }),
       );
   }
@@ -163,7 +144,7 @@ export class ApiService {
       .pipe(
         tap((updatedNodes) => {
           this.nodes.set(updatedNodes);
-          this.syncTelemetryData();
+          this.fetchDashboardData();
         }),
       );
   }
@@ -174,7 +155,7 @@ export class ApiService {
         this.nodes.set(res.nodes);
         this.globalShieldEngaged.set(true);
         this.isAttackActive.set(false);
-        this.syncTelemetryData();
+        this.fetchDashboardData();
       }),
     );
   }
@@ -187,21 +168,9 @@ export class ApiService {
           this.nodes.set(res.nodes);
           this.isAttackActive.set(true);
           this.globalShieldEngaged.set(false);
-          this.syncTelemetryData();
+          this.fetchDashboardData();
         }),
       );
-  }
-
-  public handleLoginSuccess(token: string, operator: string, role: string) {
-    localStorage.setItem('token', token);
-    localStorage.setItem('operator', operator);
-    localStorage.setItem('role', role);
-
-    this.token.set(token);
-    this.activeOperator.set(operator);
-    this.clearanceRole.set(role);
-
-    this.startLiveTelemetrySync();
   }
 
   public terminateSession() {
@@ -211,6 +180,5 @@ export class ApiService {
     this.clearanceRole.set('GUEST');
     this.nodes.set([]);
     this.auditLogs.set([]);
-    this.stopLiveTelemetrySync();
   }
 }
