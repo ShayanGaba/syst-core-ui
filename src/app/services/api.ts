@@ -68,15 +68,21 @@ export class ApiService {
     this.activeTab.set(tabName);
   }
 
-  // Pure, solid login connection with zero background loop clutter
+  // Heavy-duty login handler that checks all possible token properties
   public executeHandshake(usernameInput: string, passwordInput: string): Observable<any> {
     return this.http
       .post<any>(`${this.baseUrl}/auth/login`, { username: usernameInput, password: passwordInput })
       .pipe(
         tap((res) => {
-          const token = res.token || res.accessToken;
-          const operator = res.operator || res.username || usernameInput;
-          const role = res.role || res.clearance || 'ADMIN';
+          // Checks every single common variant (including standard NestJS access_token)
+          const token =
+            res?.token ||
+            res?.accessToken ||
+            res?.access_token ||
+            res?.data?.token ||
+            res?.data?.access_token;
+          const operator = res?.operator || res?.username || res?.user?.username || usernameInput;
+          const role = res?.role || res?.clearance || res?.user?.role || 'ADMIN';
 
           if (token) {
             localStorage.setItem('token', token);
@@ -88,12 +94,16 @@ export class ApiService {
             this.clearanceRole.set(role);
 
             this.fetchDashboardData();
+          } else {
+            console.error(
+              'Authentication responded successfully, but no valid token key was detected in payload:',
+              res,
+            );
           }
         }),
       );
   }
 
-  // Standard one-time fetch on load or action completions
   public fetchDashboardData() {
     if (!this.token()) return;
 
@@ -116,7 +126,6 @@ export class ApiService {
     });
   }
 
-  // Infrastructure Controllers
   public toggleNodeStatus(
     nodeId: string,
     instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE',
