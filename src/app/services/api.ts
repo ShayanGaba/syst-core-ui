@@ -1,4 +1,4 @@
-import { Injectable, signal, computed, inject } from '@angular/core';
+import { Injectable, inject, signal, computed } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 
 export interface SystemNode {
@@ -25,9 +25,10 @@ export class ApiService {
   private http = inject(HttpClient);
   private baseUrl = 'https://syst-core-api.vercel.app';
 
-  public token = signal<string | null>(null);
-  public activeOperator = signal<string>('UNAUTHORIZED');
-  public clearanceRole = signal<string>('GUEST');
+  // State Management Signals
+  public token = signal<string | null>(localStorage.getItem('token'));
+  public activeOperator = signal<string>(localStorage.getItem('operator') || 'UNAUTHORIZED');
+  public clearanceRole = signal<string>(localStorage.getItem('role') || 'GUEST');
 
   public totalNetworkTraffic = signal<number>(142850);
   public isAttackActive = signal<boolean>(false);
@@ -36,25 +37,23 @@ export class ApiService {
   public nodes = signal<SystemNode[]>([]);
   public auditLogs = signal<AuditLog[]>([]);
 
-  public globalBandwidthAverage = computed(() => {
+  private syncInterval: any = null;
+
+  globalBandwidthAverage = computed(() => {
     const activeNodes = this.nodes().filter((n) => n.status !== 'ISOLATED');
     if (activeNodes.length === 0) return 0;
     const total = activeNodes.reduce((acc, curr) => acc + curr.bandwidthUsage, 0);
     return Math.round(total / activeNodes.length);
   });
 
-  private currentTab = signal<string>('matrix');
-  public activeTab = this.currentTab.asReadonly();
-
   constructor() {
-    this.syncSystemState();
-    setInterval(() => this.executeMetricsHeartbeat(), 3500);
+    // If a session already exists on boot, fire up the telemetry sync engines immediately
+    if (this.token()) {
+      this.startLiveTelemetrySync();
+    }
   }
 
-  /**
-   Helper method to append the JWT access token to request headers safely
-   */
-  private getAuthOptions() {
+  private getHeaders() {
     return {
       headers: new HttpHeaders({
         Authorization: `Bearer ${this.token()}`,
@@ -62,132 +61,110 @@ export class ApiService {
     };
   }
 
-  public syncSystemState(): void {
+  // Starts real-time automated background polling for terminal logs and infrastructure health
+  public startLiveTelemetrySync() {
+    if (this.syncInterval) clearInterval(this.syncInterval);
+
+    // Fetch immediately on activation
+    this.syncTelemetryData();
+
+    // Continuously pull updates every 2000ms (2 seconds) to keep the terminal updating live
+    this.syncInterval = setInterval(() => {
+      this.syncTelemetryData();
+    }, 2000);
+  }
+
+  public stopLiveTelemetrySync() {
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+      this.syncInterval = null;
+    }
+  }
+
+  private syncTelemetryData() {
     if (!this.token()) return;
 
-    this.http.get<SystemNode[]>(`${this.baseUrl}/metrics/nodes`, this.getAuthOptions()).subscribe({
+    // Direct background stream for infrastructure nodes
+    this.http.get<SystemNode[]>(`${this.baseUrl}/metrics/nodes`, this.getHeaders()).subscribe({
       next: (data) => this.nodes.set(data),
-      error: (err) => console.error('Failed to sync system cluster infrastructure:', err),
+      error: (err) => console.error('Telemetry node sync drop:', err),
     });
 
-    this.http.get<AuditLog[]>(`${this.baseUrl}/metrics/logs`, this.getAuthOptions()).subscribe({
-      next: (data) => this.auditLogs.set(data),
-      error: (err) => console.error('Failed to retrieve active log cache:', err),
+    // Direct background stream for the live command line terminal feed
+    this.http.get<any[]>(`${this.baseUrl}/metrics/logs`, this.getHeaders()).subscribe({
+      next: (data) => {
+        const parsedLogs: AuditLog[] = data.map((log) => ({
+          timestamp: log.timestamp,
+          scope: log.scope,
+          event: log.event,
+          severity: log.severity === 'WARN' ? 'WARN' : log.severity,
+        }));
+        this.auditLogs.set(parsedLogs);
+      },
+      error: (err) => console.error('Terminal feed log sync drop:', err),
     });
   }
 
-  public executeHandshake(operatorId: string, passkey: string): boolean {
-    if (!operatorId || !passkey) return false;
-
-    this.http
-      .post<any>(`${this.baseUrl}/auth/login`, {
-        username: operatorId,
-        password: passkey,
-      })
-      .subscribe({
-        next: (response) => {
-          this.token.set(response.access_token);
-          this.clearanceRole.set(operatorId === 'shayan' ? 'Admin' : 'User');
-          this.activeOperator.set(operatorId);
-          this.syncSystemState();
-        },
-        error: (err) => {
-          console.error('Cryptographic handshake rejected by authentication gate:', err);
-        },
-      });
-
-    return true;
-  }
-
-  public terminateSession(): void {
-    this.token.set(null);
-    this.activeOperator.set('UNAUTHORIZED');
-    this.clearanceRole.set('GUEST');
-    this.globalShieldEngaged.set(false);
-    this.isAttackActive.set(false);
-    this.nodes.set([]);
-    this.auditLogs.set([]);
-  }
-
-  public setTab(tabName: string): void {
-    this.currentTab.set(tabName);
-  }
-
-  public toggleNodeStatus(nodeId: string, instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE'): void {
-    if (this.clearanceRole() !== 'Admin') return;
-
-    this.http
+  // Mutation commands - automatically triggers an immediate sync refresh upon completion
+  public toggleNodeStatus(nodeId: string, instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE') {
+    return this.http
       .post<
         SystemNode[]
-      >(`${this.baseUrl}/metrics/nodes/${nodeId}/status`, { instruction }, this.getAuthOptions())
-      .subscribe({
-        next: (updatedNodes) => this.nodes.set(updatedNodes),
-        error: (err) => console.error('Core routing instruction rejected by backend node:', err),
-      });
-  }
-
-  public provisionNewNode(
-    nodeName: string,
-    architectureType: 'consumer' | 'enterprise' | 'secure',
-  ): void {
-    if (this.clearanceRole() !== 'Admin' || !nodeName || !nodeName.trim()) return;
-
-    this.http
-      .post<SystemNode[]>(
-        `${this.baseUrl}/metrics/nodes/provision`,
-        {
-          name: nodeName,
-          type: architectureType,
-        },
-        this.getAuthOptions(),
-      )
+      >(`${this.baseUrl}/metrics/nodes/${nodeId}/status`, { instruction }, this.getHeaders())
       .subscribe({
         next: (updatedNodes) => {
           this.nodes.set(updatedNodes);
-          this.setTab('matrix');
+          this.syncTelemetryData();
         },
-        error: (err) => console.error('Infrastructure provisioning failed:', err),
       });
   }
 
-  public engageCounterMeasureShield(): void {
-    if (this.clearanceRole() !== 'Admin') return;
-
-    this.http
-      .post<{
-        nodes: SystemNode[];
-        shieldActive: boolean;
-      }>(`${this.baseUrl}/metrics/system/shield`, {}, this.getAuthOptions())
+  public engageCounterMeasureShield() {
+    return this.http
+      .post<any>(`${this.baseUrl}/metrics/system/shield`, {}, this.getHeaders())
       .subscribe({
-        next: (response) => {
-          this.globalShieldEngaged.set(response.shieldActive);
+        next: (res) => {
+          this.nodes.set(res.nodes);
+          this.globalShieldEngaged.set(true);
           this.isAttackActive.set(false);
-          this.nodes.set(response.nodes);
+          this.syncTelemetryData();
         },
-        error: (err) => console.error('Failed to dispatch counter-measure arrays:', err),
       });
   }
 
-  public injectBreachSimulation(): void {
-    if (this.clearanceRole() !== 'Admin') return;
-
-    this.http
-      .post<{
-        nodes: SystemNode[];
-        attackActive: boolean;
-      }>(`${this.baseUrl}/metrics/system/breach-test`, {}, this.getAuthOptions())
+  public injectBreachSimulation() {
+    return this.http
+      .post<any>(`${this.baseUrl}/metrics/system/breach-test`, {}, this.getHeaders())
       .subscribe({
-        next: (response) => {
+        next: (res) => {
+          this.nodes.set(res.nodes);
+          this.isAttackActive.set(true);
           this.globalShieldEngaged.set(false);
-          this.isAttackActive.set(response.attackActive);
-          this.nodes.set(response.nodes);
+          this.syncTelemetryData();
         },
-        error: (err) => console.error('Failed to safely trigger diagnostic firewall exploit:', err),
       });
   }
 
-  private executeMetricsHeartbeat(): void {
-    if (!this.token()) return;
-    this.totalNetworkTraffic.update((v) => v + Math.floor(Math.random() * 45) - 20);
+  // Authentication interface controllers
+  public handleLoginSuccess(token: string, operator: string, role: string) {
+    localStorage.setItem('token', token);
+    localStorage.setItem('operator', operator);
+    localStorage.setItem('role', role);
+
+    this.token.set(token);
+    this.activeOperator.set(operator);
+    this.clearanceRole.set(role);
+
+    this.startLiveTelemetrySync();
+  }
+
+  public disconnectSession() {
+    localStorage.clear();
+    this.token.set(null);
+    this.activeOperator.set('UNAUTHORIZED');
+    this.clearanceRole.set('GUEST');
+    this.nodes.set([]);
+    this.auditLogs.set([]);
+    this.stopLiveTelemetrySync();
   }
 }
