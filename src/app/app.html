@@ -148,6 +148,13 @@
               (click)="api.toggleNodeStatus(node.id, 'ISOLATE')">ISOLATE</button>
             <button class="ctrl-btn restore" *ngIf="node.status !== 'ONLINE'"
               (click)="api.toggleNodeStatus(node.id, 'RESTORE')">RESTORE</button>
+            <span *ngIf="api.clearanceRole() === 'Admin'">
+              <button (click)="api.deprovisionNode(node.id)"
+                style="background: #3a0d11; color: #ff6b6b; border: 1px solid #5a181e; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-left: 8px;"
+                onmouseover="this.style.background='#5a181e'" onmouseout="this.style.background='#3a0d11'">
+                TERMINATE NODE
+              </button>
+            </span>
           </div>
         </div>
       </section>

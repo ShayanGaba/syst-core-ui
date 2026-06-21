@@ -197,13 +197,6 @@
 //   }
 // }
 
-
-
-
-
-
-
-
 import { Injectable, inject, signal, computed, OnDestroy } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Router } from '@angular/router';
@@ -281,17 +274,29 @@ export class ApiService implements OnDestroy {
   }
 
   public executeHandshake(usernameInput: string, passwordInput: string): void {
-    this.http.post<any>(`${this.baseUrl}/auth/login`, { username: usernameInput, password: passwordInput })
+    this.http
+      .post<any>(`${this.baseUrl}/auth/login`, { username: usernameInput, password: passwordInput })
       .subscribe({
         next: (res) => {
-          const token = res?.token || res?.accessToken || res?.access_token || res?.data?.token || res?.data?.access_token;
+          const token =
+            res?.token ||
+            res?.accessToken ||
+            res?.access_token ||
+            res?.data?.token ||
+            res?.data?.access_token;
           const operator = res?.operator || res?.username || res?.user?.username || usernameInput;
-          
-          let detectedRole = res?.role || res?.roles || res?.clearance || res?.user?.role || res?.user?.roles || res?.data?.role;
+
+          let detectedRole =
+            res?.role ||
+            res?.roles ||
+            res?.clearance ||
+            res?.user?.role ||
+            res?.user?.roles ||
+            res?.data?.role;
           if (Array.isArray(detectedRole)) {
             detectedRole = detectedRole[0];
           }
-          
+
           // 🟢 THE FIX: Strictly align casing to exactly match 'Admin' or 'User' for template expressions
           let finalRole = 'User';
           if (detectedRole) {
@@ -301,39 +306,47 @@ export class ApiService implements OnDestroy {
             else finalRole = String(detectedRole);
           } else {
             // Implicit fallback matching username directly
-            finalRole = (usernameInput.toLowerCase() === 'shayan' || usernameInput.toLowerCase().includes('admin')) ? 'Admin' : 'User';
+            finalRole =
+              usernameInput.toLowerCase() === 'shayan' ||
+              usernameInput.toLowerCase().includes('admin')
+                ? 'Admin'
+                : 'User';
           }
-          
+
           if (token) {
             localStorage.setItem('token', token);
             localStorage.setItem('operator', operator);
             localStorage.setItem('role', finalRole);
-            
+
             this.token.set(token);
             this.activeOperator.set(operator);
             this.clearanceRole.set(finalRole);
             this.activeTab.set('matrix');
 
             this.startLiveStream();
-            
+
             this.router.navigate(['/dashboard']).catch(() => {
               console.log('App is utilizing state-swapping instead of deep router links.');
             });
           } else {
-            alert('Server accepted credentials but did not send a token key in its response object.');
+            alert(
+              'Server accepted credentials but did not send a token key in its response object.',
+            );
           }
         },
         error: (err) => {
           console.error('System Identity Validation Breach Failed:', err);
-          alert(`Server Login Rejected!\nStatus Code: ${err.status}\nMessage: ${err.error?.message || err.message}`);
-        }
+          alert(
+            `Server Login Rejected!\nStatus Code: ${err.status}\nMessage: ${err.error?.message || err.message}`,
+          );
+        },
       });
   }
 
   public startLiveStream() {
     this.stopLiveStream();
     this.fetchDashboardData();
-    
+
     this.telemetryHeartbeat = setInterval(() => {
       this.fetchDashboardData();
     }, 3000);
@@ -351,39 +364,71 @@ export class ApiService implements OnDestroy {
 
     this.http.get<SystemNode[]>(`${this.baseUrl}/metrics/nodes`, this.getHeaders()).subscribe({
       next: (data) => this.nodes.set(data),
-      error: (err) => console.error('Failed to load infrastructure data:', err)
+      error: (err) => console.error('Failed to load infrastructure data:', err),
     });
 
     this.http.get<any[]>(`${this.baseUrl}/metrics/logs`, this.getHeaders()).subscribe({
       next: (data) => {
-        const parsedLogs: AuditLog[] = data.map(log => ({
+        const parsedLogs: AuditLog[] = data.map((log) => ({
           timestamp: log.timestamp || log.createdAt || new Date().toISOString(),
           scope: log.scope || log.tenantId || 'GLOBAL_SYSTEM',
           event: log.event || log.action,
-          severity: log.severity === 'WARN' ? 'WARN' : log.severity || 'INFO'
+          severity: log.severity === 'WARN' ? 'WARN' : log.severity || 'INFO',
         }));
         this.auditLogs.set(parsedLogs);
       },
-      error: (err) => console.error('Failed to load audit logs:', err)
+      error: (err) => console.error('Failed to load audit logs:', err),
     });
   }
 
   public toggleNodeStatus(nodeId: string, instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE') {
-    this.http.post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/${nodeId}/status`, { instruction }, this.getHeaders()).subscribe({
-      next: (updatedNodes) => {
-        this.nodes.set(updatedNodes);
-        this.fetchDashboardData();
-      }
-    });
+    this.http
+      .post<
+        SystemNode[]
+      >(`${this.baseUrl}/metrics/nodes/${nodeId}/status`, { instruction }, this.getHeaders())
+      .subscribe({
+        next: (updatedNodes) => {
+          this.nodes.set(updatedNodes);
+          this.fetchDashboardData();
+        },
+      });
   }
 
   public provisionNewNode(name: string, type: 'consumer' | 'enterprise' | 'secure') {
-    this.http.post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/provision`, { name, type }, this.getHeaders()).subscribe({
-      next: (updatedNodes) => {
-        this.nodes.set(updatedNodes);
-        this.fetchDashboardData();
-      }
-    });
+    this.http
+      .post<
+        SystemNode[]
+      >(`${this.baseUrl}/metrics/nodes/provision`, { name, type }, this.getHeaders())
+      .subscribe({
+        next: (updatedNodes) => {
+          this.nodes.set(updatedNodes);
+          this.fetchDashboardData();
+        },
+      });
+  }
+
+  public deprovisionNode(nodeId: string) {
+    // Sends a request to remove the specific node container
+    this.http
+      .delete<SystemNode[]>(`${this.baseUrl}/metrics/nodes/${nodeId}`, this.getHeaders())
+      .subscribe({
+        next: (updatedNodes) => {
+          // Instantly updates the screen layout with the remaining boxes
+          this.nodes.set(updatedNodes);
+          this.fetchDashboardData();
+        },
+        error: (err) => {
+          console.error('Failed to terminate node container:', err);
+          // Fallback: If your backend uses a POST route for deletion instead of a DELETE method, try this:
+          this.http
+            .post<
+              SystemNode[]
+            >(`${this.baseUrl}/metrics/nodes/${nodeId}/delete`, {}, this.getHeaders())
+            .subscribe({
+              next: (nodes) => this.nodes.set(nodes),
+            });
+        },
+      });
   }
 
   public engageCounterMeasureShield() {
@@ -393,19 +438,21 @@ export class ApiService implements OnDestroy {
         this.globalShieldEngaged.set(true);
         this.isAttackActive.set(false);
         this.fetchDashboardData();
-      }
+      },
     });
   }
 
   public injectBreachSimulation() {
-    this.http.post<any>(`${this.baseUrl}/metrics/system/breach-test`, {}, this.getHeaders()).subscribe({
-      next: (res) => {
-        this.nodes.set(res.nodes);
-        this.isAttackActive.set(true);
-        this.globalShieldEngaged.set(false);
-        this.fetchDashboardData();
-      }
-    });
+    this.http
+      .post<any>(`${this.baseUrl}/metrics/system/breach-test`, {}, this.getHeaders())
+      .subscribe({
+        next: (res) => {
+          this.nodes.set(res.nodes);
+          this.isAttackActive.set(true);
+          this.globalShieldEngaged.set(false);
+          this.fetchDashboardData();
+        },
+      });
   }
 
   public terminateSession() {
