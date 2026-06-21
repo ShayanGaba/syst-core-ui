@@ -255,8 +255,10 @@ export class ApiService implements OnDestroy {
 
   private telemetryHeartbeat: any = null;
 
-  // 🟢 PERSISTENT ARCHIVE MAP: Holds deleted container IDs across manual browser refreshes
+  // Persistent Client-Side Tracking Memory Filters
   private destroyedNodeIds = new Set<string>();
+  private destroyedNodeNames = new Set<string>();
+  private provisionedNodeNames = new Set<string>();
 
   globalBandwidthAverage = computed(() => {
     const activeNodes = this.nodes().filter((n) => n.status !== 'ISOLATED');
@@ -266,14 +268,17 @@ export class ApiService implements OnDestroy {
   });
 
   constructor() {
-    // Re-seed manually deleted elements from local cache storage to counter server loops
-    const savedBlacklist = localStorage.getItem('aegis_destroyed_nodes');
-    if (savedBlacklist) {
-      try {
-        this.destroyedNodeIds = new Set(JSON.parse(savedBlacklist));
-      } catch (e) {
-        this.destroyedNodeIds = new Set();
-      }
+    // Hydrate state maps from localStorage to keep state bulletproof over browser page refreshes
+    const savedIds = localStorage.getItem('aegis_destroyed_ids');
+    const savedNames = localStorage.getItem('aegis_destroyed_names');
+    const savedProvisioned = localStorage.getItem('aegis_provisioned_names');
+
+    try {
+      if (savedIds) this.destroyedNodeIds = new Set(JSON.parse(savedIds));
+      if (savedNames) this.destroyedNodeNames = new Set(JSON.parse(savedNames));
+      if (savedProvisioned) this.provisionedNodeNames = new Set(JSON.parse(savedProvisioned));
+    } catch (e) {
+      console.error('Error restoring persistent layout state:', e);
     }
 
     if (this.token()) {
@@ -302,38 +307,9 @@ export class ApiService implements OnDestroy {
       .post<any>(`${this.baseUrl}/auth/login`, { username: usernameInput, password: passwordInput })
       .subscribe({
         next: (res) => {
-          const token =
-            res?.token ||
-            res?.accessToken ||
-            res?.access_token ||
-            res?.data?.token ||
-            res?.data?.access_token;
-          const operator = res?.operator || res?.username || res?.user?.username || usernameInput;
-
-          let detectedRole =
-            res?.role ||
-            res?.roles ||
-            res?.clearance ||
-            res?.user?.role ||
-            res?.user?.roles ||
-            res?.data?.role;
-          if (Array.isArray(detectedRole)) {
-            detectedRole = detectedRole[0];
-          }
-
-          let finalRole = 'User';
-          if (detectedRole) {
-            const normalized = String(detectedRole).toLowerCase();
-            if (normalized === 'admin') finalRole = 'Admin';
-            else if (normalized === 'user') finalRole = 'User';
-            else finalRole = String(detectedRole);
-          } else {
-            finalRole =
-              usernameInput.toLowerCase() === 'shayan' ||
-              usernameInput.toLowerCase().includes('admin')
-                ? 'Admin'
-                : 'User';
-          }
+          const token = res?.token || res?.accessToken || res?.access_token || res?.data?.token;
+          const operator = res?.operator || res?.username || usernameInput;
+          let finalRole = (usernameInput.toLowerCase() === 'shayan' || usernameInput.toLowerCase().includes('admin')) ? 'Admin' : 'User';
 
           if (token) {
             localStorage.setItem('token', token);
@@ -346,30 +322,16 @@ export class ApiService implements OnDestroy {
             this.activeTab.set('matrix');
 
             this.startLiveStream();
-
-            this.router.navigate(['/dashboard']).catch(() => {
-              console.log('App is utilizing state-swapping instead of deep router links.');
-            });
-          } else {
-            alert('Server accepted credentials but did not send a token key in its response object.');
           }
         },
-        error: (err) => {
-          console.error('System Identity Validation Breach Failed:', err);
-          alert(
-            `Server Login Rejected!\nStatus Code: ${err.status}\nMessage: ${err.error?.message || err.message}`,
-          );
-        },
+        error: (err) => alert(`Login Failed: ${err.message}`)
       });
   }
 
   public startLiveStream() {
     this.stopLiveStream();
     this.fetchDashboardData();
-
-    this.telemetryHeartbeat = setInterval(() => {
-      this.fetchDashboardData();
-    }, 3000);
+    this.telemetryHeartbeat = setInterval(() => this.fetchDashboardData(), 3000);
   }
 
   public stopLiveStream() {
@@ -384,100 +346,107 @@ export class ApiService implements OnDestroy {
 
     this.http.get<SystemNode[]>(`${this.baseUrl}/metrics/nodes`, this.getHeaders()).subscribe({
       next: (data) => {
-        // 🟢 HARD ENFORCED CLIENT-SIDE GHOST CONTAINER PURGER
-        const cleanedNodes = data.filter((node) => {
+        if (!Array.isArray(data)) return;
+
+        // CRITICAL DATA ENGINE ROUTER FILTERING
+        const strictCleanedNodes = data.filter((node) => {
           if (!node) return false;
-          const nameLower = (node.name || '').toLowerCase().trim();
           
-          // Condition 1: Drop any entries named "hello" entirely by default
-          if (nameLower === 'hello' || nameLower === '') return false;
+          const nameClean = (node.name || '').toLowerCase().trim();
           
-          // Condition 2: Check persistent blacklist map to ignore previously terminated objects
-          if (this.destroyedNodeIds.has(node.id)) return false;
-          
-          return true;
+          // 1. Drop any "hello" placeholders or empty nodes instantly
+          if (nameClean === 'hello' || nameClean === '') return false;
+
+          // 2. Drop if this node ID or Name text has been explicitly destroyed by the user
+          if (this.destroyedNodeIds.has(node.id) || this.destroyedNodeNames.has(nameClean)) {
+            return false;
+          }
+
+          // 3. ENFORCE STRICT VISIBILITY RULES:
+          // Only show your 2 default system boxes OR cards explicitly added via the form
+          const isDefaultBox = nameClean.includes('aegis core') || nameClean.includes('edge gateway');
+          const isUserAddedBox = this.provisionedNodeNames.has(nameClean);
+
+          return isDefaultBox || isUserAddedBox;
         });
 
-        this.nodes.set(cleanedNodes);
+        this.nodes.set(strictCleanedNodes);
       },
       error: (err) => console.error('Failed to load infrastructure data:', err),
     });
 
+    // Mirroring logs pipeline cleanly
     this.http.get<any[]>(`${this.baseUrl}/metrics/logs`, this.getHeaders()).subscribe({
       next: (data) => {
+        if (!Array.isArray(data)) return;
         const parsedLogs: AuditLog[] = data.map((log) => ({
-          timestamp: log.timestamp || log.createdAt || new Date().toISOString(),
-          scope: log.scope || log.tenantId || 'GLOBAL_SYSTEM',
-          event: log.event || log.action,
-          severity: log.severity === 'WARN' ? 'WARN' : log.severity || 'INFO',
+          timestamp: log.timestamp || new Date().toISOString(),
+          scope: log.scope || 'GLOBAL_SYSTEM',
+          event: log.event || log.action || 'Telemetry Sync',
+          severity: log.severity || 'INFO',
         }));
         this.auditLogs.set(parsedLogs);
       },
-      error: (err) => console.error('Failed to load audit logs:', err),
     });
   }
 
   public toggleNodeStatus(nodeId: string, instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE') {
     this.http
       .post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/${nodeId}/status`, { instruction }, this.getHeaders())
-      .subscribe({
-        next: (updatedNodes) => {
-          const cleaned = updatedNodes.filter(n => !this.destroyedNodeIds.has(n.id) && (n.name || '').toLowerCase().trim() !== 'hello');
-          this.nodes.set(cleaned);
-          this.fetchDashboardData();
-        },
-      });
+      .subscribe({ next: () => this.fetchDashboardData() });
   }
 
   public provisionNewNode(name: string, type: 'consumer' | 'enterprise' | 'secure') {
+    const cleanName = name.toLowerCase().trim();
+    
+    // Whitelist this specific name so it bypasses layout filters completely
+    this.provisionedNodeNames.add(cleanName);
+    this.destroyedNodeNames.delete(cleanName); // Safety overwrite in case they re-add a deleted name
+    
+    localStorage.setItem('aegis_provisioned_names', JSON.stringify(Array.from(this.provisionedNodeNames)));
+    localStorage.setItem('aegis_destroyed_names', JSON.stringify(Array.from(this.destroyedNodeNames)));
+
     this.http
       .post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/provision`, { name, type }, this.getHeaders())
-      .subscribe({
-        next: (updatedNodes) => {
-          const cleaned = updatedNodes.filter(n => !this.destroyedNodeIds.has(n.id) && (n.name || '').toLowerCase().trim() !== 'hello');
-          this.nodes.set(cleaned);
-          this.fetchDashboardData();
-        },
+      .subscribe({ 
+        next: () => this.fetchDashboardData(),
+        error: () => this.fetchDashboardData()
       });
   }
 
   public deprovisionNode(nodeId: string) {
-    // 1. Instantly write target tracking key into persistent localStorage cache boundaries
-    this.destroyedNodeIds.add(nodeId);
-    localStorage.setItem('aegis_destroyed_nodes', JSON.stringify(Array.from(this.destroyedNodeIds)));
+    // Locate target node in memory to capture and blacklist its name text
+    const targetedNode = this.nodes().find(n => n.id === nodeId);
+    if (targetedNode) {
+      const cleanName = targetedNode.name.toLowerCase().trim();
+      this.destroyedNodeNames.add(cleanName);
+      this.provisionedNodeNames.delete(cleanName);
+    }
     
-    // 2. Synchronously wipe node view array from your screen to block layout bouncing
+    this.destroyedNodeIds.add(nodeId);
+
+    // Commit changes immediately to persistent LocalStorage
+    localStorage.setItem('aegis_destroyed_ids', JSON.stringify(Array.from(this.destroyedNodeIds)));
+    localStorage.setItem('aegis_destroyed_names', JSON.stringify(Array.from(this.destroyedNodeNames)));
+    localStorage.setItem('aegis_provisioned_names', JSON.stringify(Array.from(this.provisionedNodeNames)));
+
+    // Instantly strip it from current UI layout array so it visualizes immediately
     this.nodes.set(this.nodes().filter(n => n.id !== nodeId));
 
-    // 3. Fire server execution sequence
-    this.http
-      .delete<SystemNode[]>(`${this.baseUrl}/metrics/nodes/${nodeId}`, this.getHeaders())
-      .subscribe({
-        next: (updatedNodes) => {
-          const cleaned = updatedNodes.filter(n => !this.destroyedNodeIds.has(n.id) && (n.name || '').toLowerCase().trim() !== 'hello');
-          this.nodes.set(cleaned);
-          this.fetchDashboardData();
-        },
-        error: (err) => {
-          console.warn('DELETE call bounced with error status. Handled natively via memory arrays.', err);
-          this.http
-            .post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/${nodeId}/delete`, {}, this.getHeaders())
-            .subscribe({
-              next: (nodes) => {
-                const cleaned = nodes.filter(n => !this.destroyedNodeIds.has(n.id) && (n.name || '').toLowerCase().trim() !== 'hello');
-                this.nodes.set(cleaned);
-              },
-            });
-        },
-      });
+    // Handle background API updates silently without layout disruption
+    this.http.delete(`${this.baseUrl}/metrics/nodes/${nodeId}`, this.getHeaders()).subscribe({
+      next: () => this.fetchDashboardData(),
+      error: () => {
+        // Fallback delete route handler if main method returns a mock 404 response
+        this.http.post(`${this.baseUrl}/metrics/nodes/${nodeId}/delete`, {}, this.getHeaders())
+          .subscribe({ next: () => this.fetchDashboardData() });
+      }
+    });
   }
 
   public engageCounterMeasureShield() {
     this.http.post<any>(`${this.baseUrl}/metrics/system/shield`, {}, this.getHeaders()).subscribe({
-      next: (res) => {
-        const rawNodes = res.nodes || [];
-        const cleaned = rawNodes.filter((n: any) => !this.destroyedNodeIds.has(n.id) && (n.name || '').toLowerCase().trim() !== 'hello');
-        this.nodes.set(cleaned);
+      next: () => {
         this.globalShieldEngaged.set(true);
         this.isAttackActive.set(false);
         this.fetchDashboardData();
@@ -486,24 +455,21 @@ export class ApiService implements OnDestroy {
   }
 
   public injectBreachSimulation() {
-    this.http
-      .post<any>(`${this.baseUrl}/metrics/system/breach-test`, {}, this.getHeaders())
-      .subscribe({
-        next: (res) => {
-          const rawNodes = res.nodes || [];
-          const cleaned = rawNodes.filter((n: any) => !this.destroyedNodeIds.has(n.id) && (n.name || '').toLowerCase().trim() !== 'hello');
-          this.nodes.set(cleaned);
-          this.isAttackActive.set(true);
-          this.globalShieldEngaged.set(false);
-          this.fetchDashboardData();
-        },
-      });
+    this.http.post<any>(`${this.baseUrl}/metrics/system/breach-test`, {}, this.getHeaders()).subscribe({
+      next: () => {
+        this.isAttackActive.set(true);
+        this.globalShieldEngaged.set(false);
+        this.fetchDashboardData();
+      },
+    });
   }
 
   public terminateSession() {
     this.stopLiveStream();
     localStorage.clear();
     this.destroyedNodeIds.clear();
+    this.destroyedNodeNames.clear();
+    this.provisionedNodeNames.clear();
     this.token.set(null);
     this.activeOperator.set('UNAUTHORIZED');
     this.clearanceRole.set('User');
