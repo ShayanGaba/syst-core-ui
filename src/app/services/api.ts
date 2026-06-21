@@ -207,7 +207,6 @@
 
 
 
-
 import { Injectable, inject, signal, computed, OnDestroy } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Router } from '@angular/router';
@@ -304,9 +303,40 @@ export class ApiService implements OnDestroy {
       .post<any>(`${this.baseUrl}/auth/login`, { username: usernameInput, password: passwordInput })
       .subscribe({
         next: (res) => {
-          const token = res?.token || res?.accessToken || res?.data?.token;
-          const operator = res?.operator || res?.username || usernameInput;
-          let finalRole = (usernameInput.toLowerCase() === 'shayan' || usernameInput.toLowerCase().includes('admin')) ? 'Admin' : 'User';
+          // Comprehensive extraction covering all possible token variations
+          const token =
+            res?.token ||
+            res?.accessToken ||
+            res?.access_token ||
+            res?.data?.token ||
+            res?.data?.access_token;
+            
+          const operator = res?.operator || res?.username || res?.user?.username || usernameInput;
+
+          let detectedRole =
+            res?.role ||
+            res?.roles ||
+            res?.clearance ||
+            res?.user?.role ||
+            res?.user?.roles ||
+            res?.data?.role;
+          if (Array.isArray(detectedRole)) {
+            detectedRole = detectedRole[0];
+          }
+
+          let finalRole = 'User';
+          if (detectedRole) {
+            const normalized = String(detectedRole).toLowerCase();
+            if (normalized === 'admin') finalRole = 'Admin';
+            else if (normalized === 'user') finalRole = 'User';
+            else finalRole = String(detectedRole);
+          } else {
+            finalRole =
+              usernameInput.toLowerCase() === 'shayan' ||
+              usernameInput.toLowerCase().includes('admin')
+                ? 'Admin'
+                : 'User';
+          }
 
           if (token) {
             localStorage.setItem('token', token);
@@ -317,10 +347,23 @@ export class ApiService implements OnDestroy {
             this.activeOperator.set(operator);
             this.clearanceRole.set(finalRole);
             this.activeTab.set('matrix');
+
             this.startLiveStream();
+
+            // Restored original router redirect trigger to forward you past the login screen
+            this.router.navigate(['/dashboard']).catch(() => {
+              console.log('App is utilizing state-swapping instead of deep router links.');
+            });
+          } else {
+            alert('Server accepted credentials, but no token key was found in the response object.');
           }
         },
-        error: (err) => alert(`Login Failed: ${err.message}`)
+        error: (err) => {
+          console.error('System Identity Validation Breach Failed:', err);
+          alert(
+            `Login Rejected!\nStatus Code: ${err.status}\nMessage: ${err.error?.message || err.message}`,
+          );
+        },
       });
   }
 
@@ -361,7 +404,13 @@ export class ApiService implements OnDestroy {
         const synthesizedUIGrid = [...defaultMasterNodes, ...this.customProvisionedNodes];
         this.nodes.set(synthesizedUIGrid);
       },
-      error: (err) => console.error('Failed to load telemetry nodes stream:', err),
+      error: (err) => {
+        console.error('Failed to load telemetry nodes stream:', err);
+        if (err.status === 401) {
+          // Automatically clear stale sessions if server logs a hard 401 lockout code
+          this.terminateSession();
+        }
+      },
     });
 
     this.http.get<any[]>(`${this.baseUrl}/metrics/logs`, this.getHeaders()).subscribe({
@@ -379,7 +428,6 @@ export class ApiService implements OnDestroy {
   }
 
   public toggleNodeStatus(nodeId: string, instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE') {
-    // Synchronously apply state changes to local items instantly
     const targetLocal = this.customProvisionedNodes.find(n => n.id === nodeId);
     if (targetLocal) {
       if (instruction === 'THROTTLE') targetLocal.status = 'THROTTLED';
@@ -394,32 +442,23 @@ export class ApiService implements OnDestroy {
       .subscribe({ next: () => this.fetchDashboardData() });
   }
 
-  /**
-   * Safe Provision Engine: Fires an instant UI creation push,
-   * bypassing serverless multi-instance layout conflicts.
-   */
   public provisionNewNode(name: string, type: 'consumer' | 'enterprise' | 'secure') {
     if (!name || name.trim() === '') return;
 
-    // Create an independent, fully formed interface card component object
     const fullyQualifiedNode: SystemNode = {
       id: 'aegis_client_' + Math.random().toString(36).substring(2, 11),
       name: name.trim(),
       type: type,
       status: 'ONLINE',
-      bandwidthUsage: Math.floor(Math.random() * 31) + 20, // 20% - 50% baseline
-      slaPerformance: parseFloat((Math.random() * 1.8 + 98.1).toFixed(1)), // 98.1% - 99.9%
+      bandwidthUsage: Math.floor(Math.random() * 31) + 20, 
+      slaPerformance: parseFloat((Math.random() * 1.8 + 98.1).toFixed(1)),
       monthlyCalls: (Math.floor(Math.random() * 45) + 10) + 'K'
     };
 
-    // Append directly to our master client storage list
     this.customProvisionedNodes.push(fullyQualifiedNode);
     localStorage.setItem('aegis_local_custom_nodes', JSON.stringify(this.customProvisionedNodes));
-
-    // Force an instant layout state synchronization (0 second lag delay)
     this.nodes.set([...this.nodes(), fullyQualifiedNode]);
 
-    // Send a safe background creation payload registration to the server
     this.http
       .post<any>(`${this.baseUrl}/metrics/nodes/provision`, { name, type }, this.getHeaders())
       .subscribe({
@@ -428,21 +467,14 @@ export class ApiService implements OnDestroy {
       });
   }
 
-  /**
-   * Final Termination Engine: Wipes targets from local collections permanently
-   */
   public deprovisionNode(nodeId: string) {
     this.destroyedNodeIds.add(nodeId);
     localStorage.setItem('aegis_destroyed_ids', JSON.stringify(Array.from(this.destroyedNodeIds)));
 
-    // Clean out item from client database array structures
     this.customProvisionedNodes = this.customProvisionedNodes.filter(n => n.id !== nodeId);
     localStorage.setItem('aegis_local_custom_nodes', JSON.stringify(this.customProvisionedNodes));
-
-    // Instant UI visual extraction update
     this.nodes.set(this.nodes().filter(n => n.id !== nodeId));
 
-    // Terminate endpoint bindings quietly in the background
     this.http.delete(`${this.baseUrl}/metrics/nodes/${nodeId}`, this.getHeaders()).subscribe({
       next: () => this.fetchDashboardData(),
       error: () => {
@@ -482,5 +514,6 @@ export class ApiService implements OnDestroy {
     this.clearanceRole.set('User');
     this.nodes.set([]);
     this.auditLogs.set([]);
+    this.router.navigate(['/login']).catch(() => {});
   }
 }
