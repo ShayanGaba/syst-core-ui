@@ -303,7 +303,6 @@ export class ApiService implements OnDestroy {
       .post<any>(`${this.baseUrl}/auth/login`, { username: usernameInput, password: passwordInput })
       .subscribe({
         next: (res) => {
-          // Comprehensive extraction covering all possible token variations
           const token =
             res?.token ||
             res?.accessToken ||
@@ -350,7 +349,6 @@ export class ApiService implements OnDestroy {
 
             this.startLiveStream();
 
-            // Restored original router redirect trigger to forward you past the login screen
             this.router.navigate(['/dashboard']).catch(() => {
               console.log('App is utilizing state-swapping instead of deep router links.');
             });
@@ -407,7 +405,6 @@ export class ApiService implements OnDestroy {
       error: (err) => {
         console.error('Failed to load telemetry nodes stream:', err);
         if (err.status === 401) {
-          // Automatically clear stale sessions if server logs a hard 401 lockout code
           this.terminateSession();
         }
       },
@@ -504,14 +501,24 @@ export class ApiService implements OnDestroy {
     });
   }
 
+  /**
+   * Safe Session Termination: Wipes individual session identities 
+   * without destroying custom layout configurations or memory vectors.
+   */
   public terminateSession() {
     this.stopLiveStream();
-    localStorage.clear();
-    this.destroyedNodeIds.clear();
-    this.customProvisionedNodes = [];
+    
+    // FIXED: Selective removal instead of a total wipe!
+    localStorage.removeItem('token');
+    localStorage.removeItem('operator');
+    localStorage.removeItem('role');
+
+    // Retain this.customProvisionedNodes & this.destroyedNodeIds in-memory 
+    // and in localStorage so they transfer seamlessly to the next profile session.
     this.token.set(null);
     this.activeOperator.set('UNAUTHORIZED');
     this.clearanceRole.set('User');
+    
     this.nodes.set([]);
     this.auditLogs.set([]);
     this.router.navigate(['/login']).catch(() => {});
