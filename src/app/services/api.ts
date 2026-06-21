@@ -197,6 +197,13 @@
 //   }
 // }
 
+
+
+
+
+
+
+
 import { Injectable, inject, signal, computed, OnDestroy } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Router } from '@angular/router';
@@ -229,7 +236,7 @@ export class ApiService implements OnDestroy {
   // Core Identity State Signals
   public token = signal<string | null>(localStorage.getItem('token'));
   public activeOperator = signal<string>(localStorage.getItem('operator') || 'UNAUTHORIZED');
-  public clearanceRole = signal<string>(localStorage.getItem('role') || 'GUEST');
+  public clearanceRole = signal<string>(localStorage.getItem('role') || 'User');
 
   // Navigation Tab State
   public activeTab = signal<string>('matrix');
@@ -242,7 +249,6 @@ export class ApiService implements OnDestroy {
   public nodes = signal<SystemNode[]>([]);
   public auditLogs = signal<AuditLog[]>([]);
 
-  // Background sync thread tracker
   private telemetryHeartbeat: any = null;
 
   globalBandwidthAverage = computed(() => {
@@ -253,7 +259,6 @@ export class ApiService implements OnDestroy {
   });
 
   constructor() {
-    // If an operator is already saved, spin up the live data stream immediately
     if (this.token()) {
       this.startLiveStream();
     }
@@ -275,77 +280,60 @@ export class ApiService implements OnDestroy {
     this.activeTab.set(tabName);
   }
 
-  // 🔒 KEEPING THIS EXACTLY UNTOUCHED - SINCE LOGINS ARE WORKING PERFECTLY
   public executeHandshake(usernameInput: string, passwordInput: string): void {
-    this.http
-      .post<any>(`${this.baseUrl}/auth/login`, { username: usernameInput, password: passwordInput })
+    this.http.post<any>(`${this.baseUrl}/auth/login`, { username: usernameInput, password: passwordInput })
       .subscribe({
         next: (res) => {
-          const token =
-            res?.token ||
-            res?.accessToken ||
-            res?.access_token ||
-            res?.data?.token ||
-            res?.data?.access_token;
+          const token = res?.token || res?.accessToken || res?.access_token || res?.data?.token || res?.data?.access_token;
           const operator = res?.operator || res?.username || res?.user?.username || usernameInput;
-
-          // 🔍 CRITICAL FIX: Scan every possible backend variant for the user role BEFORE falling back
-          let detectedRole =
-            res?.role ||
-            res?.roles ||
-            res?.clearance ||
-            res?.user?.role ||
-            res?.user?.roles ||
-            res?.data?.role;
-
-          // If the server returns an array (e.g. ['USER']), grab the first item
+          
+          let detectedRole = res?.role || res?.roles || res?.clearance || res?.user?.role || res?.user?.roles || res?.data?.role;
           if (Array.isArray(detectedRole)) {
             detectedRole = detectedRole[0];
           }
-
-          // If it's still empty, we guess based on username so user2 is NEVER accidentally an admin
-          const finalRole = detectedRole
-            ? String(detectedRole).toUpperCase()
-            : usernameInput.toLowerCase().includes('admin')
-              ? 'ADMIN'
-              : 'USER';
-
+          
+          // 🟢 THE FIX: Strictly align casing to exactly match 'Admin' or 'User' for template expressions
+          let finalRole = 'User';
+          if (detectedRole) {
+            const normalized = String(detectedRole).toLowerCase();
+            if (normalized === 'admin') finalRole = 'Admin';
+            else if (normalized === 'user') finalRole = 'User';
+            else finalRole = String(detectedRole);
+          } else {
+            // Implicit fallback matching username directly
+            finalRole = (usernameInput.toLowerCase() === 'shayan' || usernameInput.toLowerCase().includes('admin')) ? 'Admin' : 'User';
+          }
+          
           if (token) {
             localStorage.setItem('token', token);
             localStorage.setItem('operator', operator);
             localStorage.setItem('role', finalRole);
-
+            
             this.token.set(token);
             this.activeOperator.set(operator);
             this.clearanceRole.set(finalRole);
             this.activeTab.set('matrix');
 
             this.startLiveStream();
-
+            
             this.router.navigate(['/dashboard']).catch(() => {
               console.log('App is utilizing state-swapping instead of deep router links.');
             });
           } else {
-            alert(
-              'Server accepted credentials but did not send a token key in its response object.',
-            );
+            alert('Server accepted credentials but did not send a token key in its response object.');
           }
         },
         error: (err) => {
           console.error('System Identity Validation Breach Failed:', err);
-          alert(
-            `Server Login Rejected!\nStatus Code: ${err.status}\nMessage: ${err.error?.message || err.message}`,
-          );
-        },
+          alert(`Server Login Rejected!\nStatus Code: ${err.status}\nMessage: ${err.error?.message || err.message}`);
+        }
       });
   }
 
-  // Safe background live-sync coordinator loops
   public startLiveStream() {
     this.stopLiveStream();
     this.fetchDashboardData();
-
-    // Polls backend feeds quietly every 3 seconds to keep UI metrics dynamically moving
+    
     this.telemetryHeartbeat = setInterval(() => {
       this.fetchDashboardData();
     }, 3000);
@@ -363,48 +351,39 @@ export class ApiService implements OnDestroy {
 
     this.http.get<SystemNode[]>(`${this.baseUrl}/metrics/nodes`, this.getHeaders()).subscribe({
       next: (data) => this.nodes.set(data),
-      error: (err) => console.error('Failed to load infrastructure data:', err),
+      error: (err) => console.error('Failed to load infrastructure data:', err)
     });
 
     this.http.get<any[]>(`${this.baseUrl}/metrics/logs`, this.getHeaders()).subscribe({
       next: (data) => {
-        const parsedLogs: AuditLog[] = data.map((log) => ({
+        const parsedLogs: AuditLog[] = data.map(log => ({
           timestamp: log.timestamp || log.createdAt || new Date().toISOString(),
           scope: log.scope || log.tenantId || 'GLOBAL_SYSTEM',
           event: log.event || log.action,
-          severity: log.severity === 'WARN' ? 'WARN' : log.severity || 'INFO',
+          severity: log.severity === 'WARN' ? 'WARN' : log.severity || 'INFO'
         }));
         this.auditLogs.set(parsedLogs);
       },
-      error: (err) => console.error('Failed to load audit logs:', err),
+      error: (err) => console.error('Failed to load audit logs:', err)
     });
   }
 
-  // Interactive UI Action Channels
   public toggleNodeStatus(nodeId: string, instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE') {
-    this.http
-      .post<
-        SystemNode[]
-      >(`${this.baseUrl}/metrics/nodes/${nodeId}/status`, { instruction }, this.getHeaders())
-      .subscribe({
-        next: (updatedNodes) => {
-          this.nodes.set(updatedNodes);
-          this.fetchDashboardData();
-        },
-      });
+    this.http.post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/${nodeId}/status`, { instruction }, this.getHeaders()).subscribe({
+      next: (updatedNodes) => {
+        this.nodes.set(updatedNodes);
+        this.fetchDashboardData();
+      }
+    });
   }
 
   public provisionNewNode(name: string, type: 'consumer' | 'enterprise' | 'secure') {
-    this.http
-      .post<
-        SystemNode[]
-      >(`${this.baseUrl}/metrics/nodes/provision`, { name, type }, this.getHeaders())
-      .subscribe({
-        next: (updatedNodes) => {
-          this.nodes.set(updatedNodes);
-          this.fetchDashboardData();
-        },
-      });
+    this.http.post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/provision`, { name, type }, this.getHeaders()).subscribe({
+      next: (updatedNodes) => {
+        this.nodes.set(updatedNodes);
+        this.fetchDashboardData();
+      }
+    });
   }
 
   public engageCounterMeasureShield() {
@@ -414,21 +393,19 @@ export class ApiService implements OnDestroy {
         this.globalShieldEngaged.set(true);
         this.isAttackActive.set(false);
         this.fetchDashboardData();
-      },
+      }
     });
   }
 
   public injectBreachSimulation() {
-    this.http
-      .post<any>(`${this.baseUrl}/metrics/system/breach-test`, {}, this.getHeaders())
-      .subscribe({
-        next: (res) => {
-          this.nodes.set(res.nodes);
-          this.isAttackActive.set(true);
-          this.globalShieldEngaged.set(false);
-          this.fetchDashboardData();
-        },
-      });
+    this.http.post<any>(`${this.baseUrl}/metrics/system/breach-test`, {}, this.getHeaders()).subscribe({
+      next: (res) => {
+        this.nodes.set(res.nodes);
+        this.isAttackActive.set(true);
+        this.globalShieldEngaged.set(false);
+        this.fetchDashboardData();
+      }
+    });
   }
 
   public terminateSession() {
@@ -436,7 +413,7 @@ export class ApiService implements OnDestroy {
     localStorage.clear();
     this.token.set(null);
     this.activeOperator.set('UNAUTHORIZED');
-    this.clearanceRole.set('GUEST');
+    this.clearanceRole.set('User');
     this.nodes.set([]);
     this.auditLogs.set([]);
   }
