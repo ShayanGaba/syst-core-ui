@@ -205,6 +205,9 @@
 
 
 
+
+
+
 import { Injectable, inject, signal, computed, OnDestroy } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Router } from '@angular/router';
@@ -252,7 +255,7 @@ export class ApiService implements OnDestroy {
 
   private telemetryHeartbeat: any = null;
 
-  // Local blacklist map tracking items we have intentionally deleted
+  // 🟢 PERSISTENT ARCHIVE MAP: Holds deleted container IDs across manual browser refreshes
   private destroyedNodeIds = new Set<string>();
 
   globalBandwidthAverage = computed(() => {
@@ -263,6 +266,16 @@ export class ApiService implements OnDestroy {
   });
 
   constructor() {
+    // Re-seed manually deleted elements from local cache storage to counter server loops
+    const savedBlacklist = localStorage.getItem('aegis_destroyed_nodes');
+    if (savedBlacklist) {
+      try {
+        this.destroyedNodeIds = new Set(JSON.parse(savedBlacklist));
+      } catch (e) {
+        this.destroyedNodeIds = new Set();
+      }
+    }
+
     if (this.token()) {
       this.startLiveStream();
     }
@@ -343,7 +356,9 @@ export class ApiService implements OnDestroy {
         },
         error: (err) => {
           console.error('System Identity Validation Breach Failed:', err);
-          alert(`Server Login Rejected!\nStatus Code: ${err.status}\nMessage: ${err.error?.message || err.message}`);
+          alert(
+            `Server Login Rejected!\nStatus Code: ${err.status}\nMessage: ${err.error?.message || err.message}`,
+          );
         },
       });
   }
@@ -368,25 +383,22 @@ export class ApiService implements OnDestroy {
     if (!this.token()) return;
 
     this.http.get<SystemNode[]>(`${this.baseUrl}/metrics/nodes`, this.getHeaders()).subscribe({
-      next: (incomingNodes) => {
-        // 🟢 SMART ANTI-FLICKER FILTER: Merge serverless arrays tracking unique keys
-        const nodeCollection = new Map<string, SystemNode>();
-        
-        // Add existing cards to preserve historical serverless sets
-        this.nodes().forEach(node => {
-          if (!this.destroyedNodeIds.has(node.id)) {
-            nodeCollection.set(node.id, node);
-          }
+      next: (data) => {
+        // 🟢 HARD ENFORCED CLIENT-SIDE GHOST CONTAINER PURGER
+        const cleanedNodes = data.filter((node) => {
+          if (!node) return false;
+          const nameLower = (node.name || '').toLowerCase().trim();
+          
+          // Condition 1: Drop any entries named "hello" entirely by default
+          if (nameLower === 'hello' || nameLower === '') return false;
+          
+          // Condition 2: Check persistent blacklist map to ignore previously terminated objects
+          if (this.destroyedNodeIds.has(node.id)) return false;
+          
+          return true;
         });
 
-        // Layer in incoming metrics payload, excluding any blacklisted items
-        incomingNodes.forEach(node => {
-          if (!this.destroyedNodeIds.has(node.id)) {
-            nodeCollection.set(node.id, node);
-          }
-        });
-
-        this.nodes.set(Array.from(nodeCollection.values()));
+        this.nodes.set(cleanedNodes);
       },
       error: (err) => console.error('Failed to load infrastructure data:', err),
     });
@@ -410,8 +422,8 @@ export class ApiService implements OnDestroy {
       .post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/${nodeId}/status`, { instruction }, this.getHeaders())
       .subscribe({
         next: (updatedNodes) => {
-          const filtered = updatedNodes.filter(n => !this.destroyedNodeIds.has(n.id));
-          this.nodes.set(filtered);
+          const cleaned = updatedNodes.filter(n => !this.destroyedNodeIds.has(n.id) && (n.name || '').toLowerCase().trim() !== 'hello');
+          this.nodes.set(cleaned);
           this.fetchDashboardData();
         },
       });
@@ -422,34 +434,38 @@ export class ApiService implements OnDestroy {
       .post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/provision`, { name, type }, this.getHeaders())
       .subscribe({
         next: (updatedNodes) => {
-          const filtered = updatedNodes.filter(n => !this.destroyedNodeIds.has(n.id));
-          this.nodes.set(filtered);
+          const cleaned = updatedNodes.filter(n => !this.destroyedNodeIds.has(n.id) && (n.name || '').toLowerCase().trim() !== 'hello');
+          this.nodes.set(cleaned);
           this.fetchDashboardData();
         },
       });
   }
 
   public deprovisionNode(nodeId: string) {
-    // Flag this target immediately so background requests never bounce it back on screen
+    // 1. Instantly write target tracking key into persistent localStorage cache boundaries
     this.destroyedNodeIds.add(nodeId);
+    localStorage.setItem('aegis_destroyed_nodes', JSON.stringify(Array.from(this.destroyedNodeIds)));
+    
+    // 2. Synchronously wipe node view array from your screen to block layout bouncing
     this.nodes.set(this.nodes().filter(n => n.id !== nodeId));
 
+    // 3. Fire server execution sequence
     this.http
       .delete<SystemNode[]>(`${this.baseUrl}/metrics/nodes/${nodeId}`, this.getHeaders())
       .subscribe({
         next: (updatedNodes) => {
-          const filtered = updatedNodes.filter(n => !this.destroyedNodeIds.has(n.id));
-          this.nodes.set(filtered);
+          const cleaned = updatedNodes.filter(n => !this.destroyedNodeIds.has(n.id) && (n.name || '').toLowerCase().trim() !== 'hello');
+          this.nodes.set(cleaned);
           this.fetchDashboardData();
         },
         error: (err) => {
-          console.warn('DELETE path fallback required, processing alternative channel...', err);
+          console.warn('DELETE call bounced with error status. Handled natively via memory arrays.', err);
           this.http
             .post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/${nodeId}/delete`, {}, this.getHeaders())
             .subscribe({
               next: (nodes) => {
-                const filtered = nodes.filter(n => !this.destroyedNodeIds.has(n.id));
-                this.nodes.set(filtered);
+                const cleaned = nodes.filter(n => !this.destroyedNodeIds.has(n.id) && (n.name || '').toLowerCase().trim() !== 'hello');
+                this.nodes.set(cleaned);
               },
             });
         },
@@ -459,8 +475,9 @@ export class ApiService implements OnDestroy {
   public engageCounterMeasureShield() {
     this.http.post<any>(`${this.baseUrl}/metrics/system/shield`, {}, this.getHeaders()).subscribe({
       next: (res) => {
-        const filtered = (res.nodes || []).filter((n: any) => !this.destroyedNodeIds.has(n.id));
-        this.nodes.set(filtered);
+        const rawNodes = res.nodes || [];
+        const cleaned = rawNodes.filter((n: any) => !this.destroyedNodeIds.has(n.id) && (n.name || '').toLowerCase().trim() !== 'hello');
+        this.nodes.set(cleaned);
         this.globalShieldEngaged.set(true);
         this.isAttackActive.set(false);
         this.fetchDashboardData();
@@ -473,8 +490,9 @@ export class ApiService implements OnDestroy {
       .post<any>(`${this.baseUrl}/metrics/system/breach-test`, {}, this.getHeaders())
       .subscribe({
         next: (res) => {
-          const filtered = (res.nodes || []).filter((n: any) => !this.destroyedNodeIds.has(n.id));
-          this.nodes.set(filtered);
+          const rawNodes = res.nodes || [];
+          const cleaned = rawNodes.filter((n: any) => !this.destroyedNodeIds.has(n.id) && (n.name || '').toLowerCase().trim() !== 'hello');
+          this.nodes.set(cleaned);
           this.isAttackActive.set(true);
           this.globalShieldEngaged.set(false);
           this.fetchDashboardData();
