@@ -250,15 +250,14 @@ export class ApiService implements OnDestroy {
   public isAttackActive = signal<boolean>(false);
   public globalShieldEngaged = signal<boolean>(false);
 
+  // Master UI arrays and local client caches
   public nodes = signal<SystemNode[]>([]);
   public auditLogs = signal<AuditLog[]>([]);
+  
+  private customProvisionedNodes: SystemNode[] = [];
+  private destroyedNodeIds = new Set<string>();
 
   private telemetryHeartbeat: any = null;
-
-  // Persistent Client-Side Tracking Memory Filters
-  private destroyedNodeIds = new Set<string>();
-  private destroyedNodeNames = new Set<string>();
-  private provisionedNodeNames = new Set<string>();
 
   globalBandwidthAverage = computed(() => {
     const activeNodes = this.nodes().filter((n) => n.status !== 'ISOLATED');
@@ -268,17 +267,15 @@ export class ApiService implements OnDestroy {
   });
 
   constructor() {
-    // Hydrate state maps from localStorage to keep state bulletproof over browser page refreshes
-    const savedIds = localStorage.getItem('aegis_destroyed_ids');
-    const savedNames = localStorage.getItem('aegis_destroyed_names');
-    const savedProvisioned = localStorage.getItem('aegis_provisioned_names');
+    // Hydrate the custom locally managed state arrays across page refreshes
+    const savedCustomNodes = localStorage.getItem('aegis_local_custom_nodes');
+    const savedDestroyedIds = localStorage.getItem('aegis_destroyed_ids');
 
     try {
-      if (savedIds) this.destroyedNodeIds = new Set(JSON.parse(savedIds));
-      if (savedNames) this.destroyedNodeNames = new Set(JSON.parse(savedNames));
-      if (savedProvisioned) this.provisionedNodeNames = new Set(JSON.parse(savedProvisioned));
+      if (savedCustomNodes) this.customProvisionedNodes = JSON.parse(savedCustomNodes);
+      if (savedDestroyedIds) this.destroyedNodeIds = new Set(JSON.parse(savedDestroyedIds));
     } catch (e) {
-      console.error('Error restoring persistent layout state:', e);
+      console.error('Error hydrating layout state profiles:', e);
     }
 
     if (this.token()) {
@@ -307,7 +304,7 @@ export class ApiService implements OnDestroy {
       .post<any>(`${this.baseUrl}/auth/login`, { username: usernameInput, password: passwordInput })
       .subscribe({
         next: (res) => {
-          const token = res?.token || res?.accessToken || res?.access_token || res?.data?.token;
+          const token = res?.token || res?.accessToken || res?.data?.token;
           const operator = res?.operator || res?.username || usernameInput;
           let finalRole = (usernameInput.toLowerCase() === 'shayan' || usernameInput.toLowerCase().includes('admin')) ? 'Admin' : 'User';
 
@@ -320,7 +317,6 @@ export class ApiService implements OnDestroy {
             this.activeOperator.set(operator);
             this.clearanceRole.set(finalRole);
             this.activeTab.set('matrix');
-
             this.startLiveStream();
           }
         },
@@ -345,37 +341,29 @@ export class ApiService implements OnDestroy {
     if (!this.token()) return;
 
     this.http.get<SystemNode[]>(`${this.baseUrl}/metrics/nodes`, this.getHeaders()).subscribe({
-      next: (data) => {
-        if (!Array.isArray(data)) return;
+      next: (serverData) => {
+        if (!Array.isArray(serverData)) return;
 
-        // CRITICAL DATA ENGINE ROUTER FILTERING
-        const strictCleanedNodes = data.filter((node) => {
+        // 1. Filter backend items to ONLY allow clean, authentic default master cards
+        const defaultMasterNodes = serverData.filter((node) => {
           if (!node) return false;
-          
           const nameClean = (node.name || '').toLowerCase().trim();
           
-          // 1. Drop any "hello" placeholders or empty nodes instantly
-          if (nameClean === 'hello' || nameClean === '') return false;
+          // Instantly filter out garbage strings
+          if (nameClean === 'hello' || nameClean === '' || nameClean === '.') return false;
+          if (this.destroyedNodeIds.has(node.id)) return false;
 
-          // 2. Drop if this node ID or Name text has been explicitly destroyed by the user
-          if (this.destroyedNodeIds.has(node.id) || this.destroyedNodeNames.has(nameClean)) {
-            return false;
-          }
-
-          // 3. ENFORCE STRICT VISIBILITY RULES:
-          // Only show your 2 default system boxes OR cards explicitly added via the form
-          const isDefaultBox = nameClean.includes('aegis core') || nameClean.includes('edge gateway');
-          const isUserAddedBox = this.provisionedNodeNames.has(nameClean);
-
-          return isDefaultBox || isUserAddedBox;
+          // Only preserve the core factory network objects from the API array
+          return nameClean.includes('aegis core') || nameClean.includes('edge gateway');
         });
 
-        this.nodes.set(strictCleanedNodes);
+        // 2. Synthesize the clean defaults together with your absolute client-side added nodes
+        const synthesizedUIGrid = [...defaultMasterNodes, ...this.customProvisionedNodes];
+        this.nodes.set(synthesizedUIGrid);
       },
-      error: (err) => console.error('Failed to load infrastructure data:', err),
+      error: (err) => console.error('Failed to load telemetry nodes stream:', err),
     });
 
-    // Mirroring logs pipeline cleanly
     this.http.get<any[]>(`${this.baseUrl}/metrics/logs`, this.getHeaders()).subscribe({
       next: (data) => {
         if (!Array.isArray(data)) return;
@@ -391,53 +379,73 @@ export class ApiService implements OnDestroy {
   }
 
   public toggleNodeStatus(nodeId: string, instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE') {
+    // Synchronously apply state changes to local items instantly
+    const targetLocal = this.customProvisionedNodes.find(n => n.id === nodeId);
+    if (targetLocal) {
+      if (instruction === 'THROTTLE') targetLocal.status = 'THROTTLED';
+      if (instruction === 'ISOLATE') targetLocal.status = 'ISOLATED';
+      if (instruction === 'RESTORE') targetLocal.status = 'ONLINE';
+      localStorage.setItem('aegis_local_custom_nodes', JSON.stringify(this.customProvisionedNodes));
+      this.fetchDashboardData();
+    }
+
     this.http
       .post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/${nodeId}/status`, { instruction }, this.getHeaders())
       .subscribe({ next: () => this.fetchDashboardData() });
   }
 
+  /**
+   * Safe Provision Engine: Fires an instant UI creation push,
+   * bypassing serverless multi-instance layout conflicts.
+   */
   public provisionNewNode(name: string, type: 'consumer' | 'enterprise' | 'secure') {
-    const cleanName = name.toLowerCase().trim();
-    
-    // Whitelist this specific name so it bypasses layout filters completely
-    this.provisionedNodeNames.add(cleanName);
-    this.destroyedNodeNames.delete(cleanName); // Safety overwrite in case they re-add a deleted name
-    
-    localStorage.setItem('aegis_provisioned_names', JSON.stringify(Array.from(this.provisionedNodeNames)));
-    localStorage.setItem('aegis_destroyed_names', JSON.stringify(Array.from(this.destroyedNodeNames)));
+    if (!name || name.trim() === '') return;
 
+    // Create an independent, fully formed interface card component object
+    const fullyQualifiedNode: SystemNode = {
+      id: 'aegis_client_' + Math.random().toString(36).substring(2, 11),
+      name: name.trim(),
+      type: type,
+      status: 'ONLINE',
+      bandwidthUsage: Math.floor(Math.random() * 31) + 20, // 20% - 50% baseline
+      slaPerformance: parseFloat((Math.random() * 1.8 + 98.1).toFixed(1)), // 98.1% - 99.9%
+      monthlyCalls: (Math.floor(Math.random() * 45) + 10) + 'K'
+    };
+
+    // Append directly to our master client storage list
+    this.customProvisionedNodes.push(fullyQualifiedNode);
+    localStorage.setItem('aegis_local_custom_nodes', JSON.stringify(this.customProvisionedNodes));
+
+    // Force an instant layout state synchronization (0 second lag delay)
+    this.nodes.set([...this.nodes(), fullyQualifiedNode]);
+
+    // Send a safe background creation payload registration to the server
     this.http
-      .post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/provision`, { name, type }, this.getHeaders())
-      .subscribe({ 
+      .post<any>(`${this.baseUrl}/metrics/nodes/provision`, { name, type }, this.getHeaders())
+      .subscribe({
         next: () => this.fetchDashboardData(),
         error: () => this.fetchDashboardData()
       });
   }
 
+  /**
+   * Final Termination Engine: Wipes targets from local collections permanently
+   */
   public deprovisionNode(nodeId: string) {
-    // Locate target node in memory to capture and blacklist its name text
-    const targetedNode = this.nodes().find(n => n.id === nodeId);
-    if (targetedNode) {
-      const cleanName = targetedNode.name.toLowerCase().trim();
-      this.destroyedNodeNames.add(cleanName);
-      this.provisionedNodeNames.delete(cleanName);
-    }
-    
     this.destroyedNodeIds.add(nodeId);
-
-    // Commit changes immediately to persistent LocalStorage
     localStorage.setItem('aegis_destroyed_ids', JSON.stringify(Array.from(this.destroyedNodeIds)));
-    localStorage.setItem('aegis_destroyed_names', JSON.stringify(Array.from(this.destroyedNodeNames)));
-    localStorage.setItem('aegis_provisioned_names', JSON.stringify(Array.from(this.provisionedNodeNames)));
 
-    // Instantly strip it from current UI layout array so it visualizes immediately
+    // Clean out item from client database array structures
+    this.customProvisionedNodes = this.customProvisionedNodes.filter(n => n.id !== nodeId);
+    localStorage.setItem('aegis_local_custom_nodes', JSON.stringify(this.customProvisionedNodes));
+
+    // Instant UI visual extraction update
     this.nodes.set(this.nodes().filter(n => n.id !== nodeId));
 
-    // Handle background API updates silently without layout disruption
+    // Terminate endpoint bindings quietly in the background
     this.http.delete(`${this.baseUrl}/metrics/nodes/${nodeId}`, this.getHeaders()).subscribe({
       next: () => this.fetchDashboardData(),
       error: () => {
-        // Fallback delete route handler if main method returns a mock 404 response
         this.http.post(`${this.baseUrl}/metrics/nodes/${nodeId}/delete`, {}, this.getHeaders())
           .subscribe({ next: () => this.fetchDashboardData() });
       }
@@ -468,8 +476,7 @@ export class ApiService implements OnDestroy {
     this.stopLiveStream();
     localStorage.clear();
     this.destroyedNodeIds.clear();
-    this.destroyedNodeNames.clear();
-    this.provisionedNodeNames.clear();
+    this.customProvisionedNodes = [];
     this.token.set(null);
     this.activeOperator.set('UNAUTHORIZED');
     this.clearanceRole.set('User');
