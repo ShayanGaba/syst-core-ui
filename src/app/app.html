@@ -148,13 +148,13 @@
               (click)="api.toggleNodeStatus(node.id, 'ISOLATE')">ISOLATE</button>
             <button class="ctrl-btn restore" *ngIf="node.status !== 'ONLINE'"
               (click)="api.toggleNodeStatus(node.id, 'RESTORE')">RESTORE</button>
-            <span *ngIf="api.clearanceRole() === 'Admin'">
-              <button (click)="api.deprovisionNode(node.id)"
-                style="background: #3a0d11; color: #ff6b6b; border: 1px solid #5a181e; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px; margin-left: 8px;"
-                onmouseover="this.style.background='#5a181e'" onmouseout="this.style.background='#3a0d11'">
-                TERMINATE NODE
-              </button>
-            </span>
+
+            <button *ngIf="api.clearanceRole() === 'Admin'" (click)="api.deprovisionNode(node.id)"
+              style="flex: 1; background: rgba(239, 68, 68, 0.1); color: #ff6b6b; border: 1px solid rgba(239, 68, 68, 0.4); padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; transition: all 0.2s ease; text-transform: uppercase;"
+              onmouseover="this.style.background='rgba(239, 68, 68, 0.25)'; this.style.borderColor='#ef4444'; this.style.boxShadow='0 0 8px rgba(239, 68, 68, 0.4)'"
+              onmouseout="this.style.background='rgba(239, 68, 68, 0.1)'; this.style.borderColor='rgba(239, 68, 68, 0.4)'; this.style.boxShadow='none'">
+              TERMINATE
+            </button>
           </div>
         </div>
       </section>

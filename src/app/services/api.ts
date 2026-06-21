@@ -197,6 +197,14 @@
 //   }
 // }
 
+
+
+
+
+
+
+
+
 import { Injectable, inject, signal, computed, OnDestroy } from '@angular/core';
 import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Router } from '@angular/router';
@@ -243,6 +251,9 @@ export class ApiService implements OnDestroy {
   public auditLogs = signal<AuditLog[]>([]);
 
   private telemetryHeartbeat: any = null;
+
+  // Local blacklist map tracking items we have intentionally deleted
+  private destroyedNodeIds = new Set<string>();
 
   globalBandwidthAverage = computed(() => {
     const activeNodes = this.nodes().filter((n) => n.status !== 'ISOLATED');
@@ -297,7 +308,6 @@ export class ApiService implements OnDestroy {
             detectedRole = detectedRole[0];
           }
 
-          // 🟢 THE FIX: Strictly align casing to exactly match 'Admin' or 'User' for template expressions
           let finalRole = 'User';
           if (detectedRole) {
             const normalized = String(detectedRole).toLowerCase();
@@ -305,7 +315,6 @@ export class ApiService implements OnDestroy {
             else if (normalized === 'user') finalRole = 'User';
             else finalRole = String(detectedRole);
           } else {
-            // Implicit fallback matching username directly
             finalRole =
               usernameInput.toLowerCase() === 'shayan' ||
               usernameInput.toLowerCase().includes('admin')
@@ -329,16 +338,12 @@ export class ApiService implements OnDestroy {
               console.log('App is utilizing state-swapping instead of deep router links.');
             });
           } else {
-            alert(
-              'Server accepted credentials but did not send a token key in its response object.',
-            );
+            alert('Server accepted credentials but did not send a token key in its response object.');
           }
         },
         error: (err) => {
           console.error('System Identity Validation Breach Failed:', err);
-          alert(
-            `Server Login Rejected!\nStatus Code: ${err.status}\nMessage: ${err.error?.message || err.message}`,
-          );
+          alert(`Server Login Rejected!\nStatus Code: ${err.status}\nMessage: ${err.error?.message || err.message}`);
         },
       });
   }
@@ -363,7 +368,26 @@ export class ApiService implements OnDestroy {
     if (!this.token()) return;
 
     this.http.get<SystemNode[]>(`${this.baseUrl}/metrics/nodes`, this.getHeaders()).subscribe({
-      next: (data) => this.nodes.set(data),
+      next: (incomingNodes) => {
+        // 🟢 SMART ANTI-FLICKER FILTER: Merge serverless arrays tracking unique keys
+        const nodeCollection = new Map<string, SystemNode>();
+        
+        // Add existing cards to preserve historical serverless sets
+        this.nodes().forEach(node => {
+          if (!this.destroyedNodeIds.has(node.id)) {
+            nodeCollection.set(node.id, node);
+          }
+        });
+
+        // Layer in incoming metrics payload, excluding any blacklisted items
+        incomingNodes.forEach(node => {
+          if (!this.destroyedNodeIds.has(node.id)) {
+            nodeCollection.set(node.id, node);
+          }
+        });
+
+        this.nodes.set(Array.from(nodeCollection.values()));
+      },
       error: (err) => console.error('Failed to load infrastructure data:', err),
     });
 
@@ -383,12 +407,11 @@ export class ApiService implements OnDestroy {
 
   public toggleNodeStatus(nodeId: string, instruction: 'THROTTLE' | 'ISOLATE' | 'RESTORE') {
     this.http
-      .post<
-        SystemNode[]
-      >(`${this.baseUrl}/metrics/nodes/${nodeId}/status`, { instruction }, this.getHeaders())
+      .post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/${nodeId}/status`, { instruction }, this.getHeaders())
       .subscribe({
         next: (updatedNodes) => {
-          this.nodes.set(updatedNodes);
+          const filtered = updatedNodes.filter(n => !this.destroyedNodeIds.has(n.id));
+          this.nodes.set(filtered);
           this.fetchDashboardData();
         },
       });
@@ -396,36 +419,38 @@ export class ApiService implements OnDestroy {
 
   public provisionNewNode(name: string, type: 'consumer' | 'enterprise' | 'secure') {
     this.http
-      .post<
-        SystemNode[]
-      >(`${this.baseUrl}/metrics/nodes/provision`, { name, type }, this.getHeaders())
+      .post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/provision`, { name, type }, this.getHeaders())
       .subscribe({
         next: (updatedNodes) => {
-          this.nodes.set(updatedNodes);
+          const filtered = updatedNodes.filter(n => !this.destroyedNodeIds.has(n.id));
+          this.nodes.set(filtered);
           this.fetchDashboardData();
         },
       });
   }
 
   public deprovisionNode(nodeId: string) {
-    // Sends a request to remove the specific node container
+    // Flag this target immediately so background requests never bounce it back on screen
+    this.destroyedNodeIds.add(nodeId);
+    this.nodes.set(this.nodes().filter(n => n.id !== nodeId));
+
     this.http
       .delete<SystemNode[]>(`${this.baseUrl}/metrics/nodes/${nodeId}`, this.getHeaders())
       .subscribe({
         next: (updatedNodes) => {
-          // Instantly updates the screen layout with the remaining boxes
-          this.nodes.set(updatedNodes);
+          const filtered = updatedNodes.filter(n => !this.destroyedNodeIds.has(n.id));
+          this.nodes.set(filtered);
           this.fetchDashboardData();
         },
         error: (err) => {
-          console.error('Failed to terminate node container:', err);
-          // Fallback: If your backend uses a POST route for deletion instead of a DELETE method, try this:
+          console.warn('DELETE path fallback required, processing alternative channel...', err);
           this.http
-            .post<
-              SystemNode[]
-            >(`${this.baseUrl}/metrics/nodes/${nodeId}/delete`, {}, this.getHeaders())
+            .post<SystemNode[]>(`${this.baseUrl}/metrics/nodes/${nodeId}/delete`, {}, this.getHeaders())
             .subscribe({
-              next: (nodes) => this.nodes.set(nodes),
+              next: (nodes) => {
+                const filtered = nodes.filter(n => !this.destroyedNodeIds.has(n.id));
+                this.nodes.set(filtered);
+              },
             });
         },
       });
@@ -434,7 +459,8 @@ export class ApiService implements OnDestroy {
   public engageCounterMeasureShield() {
     this.http.post<any>(`${this.baseUrl}/metrics/system/shield`, {}, this.getHeaders()).subscribe({
       next: (res) => {
-        this.nodes.set(res.nodes);
+        const filtered = (res.nodes || []).filter((n: any) => !this.destroyedNodeIds.has(n.id));
+        this.nodes.set(filtered);
         this.globalShieldEngaged.set(true);
         this.isAttackActive.set(false);
         this.fetchDashboardData();
@@ -447,7 +473,8 @@ export class ApiService implements OnDestroy {
       .post<any>(`${this.baseUrl}/metrics/system/breach-test`, {}, this.getHeaders())
       .subscribe({
         next: (res) => {
-          this.nodes.set(res.nodes);
+          const filtered = (res.nodes || []).filter((n: any) => !this.destroyedNodeIds.has(n.id));
+          this.nodes.set(filtered);
           this.isAttackActive.set(true);
           this.globalShieldEngaged.set(false);
           this.fetchDashboardData();
@@ -458,6 +485,7 @@ export class ApiService implements OnDestroy {
   public terminateSession() {
     this.stopLiveStream();
     localStorage.clear();
+    this.destroyedNodeIds.clear();
     this.token.set(null);
     this.activeOperator.set('UNAUTHORIZED');
     this.clearanceRole.set('User');
